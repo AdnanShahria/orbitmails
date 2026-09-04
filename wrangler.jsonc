@@ -1,0 +1,137 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "orbitmails",
+	"main": "./worker.ts",
+	"compatibility_date": "2026-05-20",
+	"keep_vars": true,
+	"vars": {
+		"CF_EMAIL_WORKER_NAME": "orbitmails"
+	},
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+	"assets": {
+		"binding": "ASSETS",
+		"directory": "./dist/client",
+		"not_found_handling": "none",
+	},
+	"images": {
+		"binding": "IMAGES",
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "orbitmails",
+		},
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "REALTIME",
+				"class_name": "RealtimeHub",
+			},
+			{
+				"name": "QUOTA_COORDINATOR",
+				"class_name": "QuotaCoordinator",
+			},
+		],
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"RealtimeHub",
+			],
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"QuotaCoordinator",
+			],
+		},
+	],
+	"triggers": {
+		"crons": ["0 2 * * *", "*/5 * * * *", "*/10 * * * *", "0 8 * * *"],
+	},
+	"ratelimits": [
+		{
+			"name": "LOGIN_RATE_LIMIT",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 20,
+				"period": 60,
+			},
+		},
+		{
+			"name": "DEVICE_LOGIN_RATE_LIMIT",
+			"namespace_id": "1003",
+			"simple": { "limit": 10, "period": 60 },
+		},
+		{
+			"name": "AGENT_RATE_LIMIT",
+			"namespace_id": "1002",
+			"simple": { "limit": 120, "period": 60 },
+		},
+	],
+	"observability": {
+		"enabled": true,
+		"traces": { "enabled": true },
+	},
+	"upload_source_maps": true,
+	"send_email": [
+		{
+			"name": "EMAIL",
+			"remote": false,
+		},
+	],
+	"ai": { "binding": "AI", "remote": true },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "orbitflare",
+			"migrations_dir": "drizzle/migrations","database_id": "b4c4e894-377a-4b7d-87e1-22bcdab33bb2",
+		},
+	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "orbitflare-raw","preview_bucket_name": "orbitflare-raw",
+		},
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "INBOUND_QUEUE",
+				"queue": "orbitflare-inbound",
+			},
+			{
+				"binding": "OUTBOUND_QUEUE",
+				"queue": "orbitflare-outbound",
+			},
+			{
+				"binding": "AGENT_QUEUE",
+				"queue": "orbitflare-agent",
+			},
+		],
+		"consumers": [
+			{
+				"queue": "orbitflare-inbound",
+				"max_batch_size": 5,
+				"max_retries": 3,
+			},
+			{
+				"queue": "orbitflare-outbound",
+				"max_batch_size": 5,
+				// Sends wait out the undo window already; do not also wait for a batch to fill.
+				"max_batch_timeout": 1,
+				"max_retries": 3,
+			},
+			{
+				"queue": "orbitflare-agent",
+				"max_batch_size": 1,
+				"max_retries": 3,
+			},
+		],
+	},
+}

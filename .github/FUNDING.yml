@@ -1,0 +1,5 @@
+# GitHub Sponsorship configuration for OrbitMails
+# Learn more: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+github: orbitsaas
+custom: ['https://orbitsaas.cloud']

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Database,
   DatabaseBackup,
   Globe2,
   Activity,
@@ -64,6 +65,7 @@ const sections: { id?: string; labelKey?: TranslationKey; links: AdminNavLink[] 
       { href: "/accounts", labelKey: "admin.nav.accounts", icon: Users },
       { href: "/activity", labelKey: "admin.nav.activity", icon: Activity, permission: "primary" },
       { href: "/backups", labelKey: "admin.nav.backups", icon: DatabaseBackup, permission: "primary" },
+      { href: "/database", labelKey: "admin.nav.database", icon: Database, permission: "primary" },
     ],
   },
   {

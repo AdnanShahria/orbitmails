@@ -2216,5 +2216,7 @@
 	"drive.save": "Save",
 	"compose.cancelSend": "Cancel",
 	"compose.sendCancelled": "Sending cancelled. Message moved to Drafts.",
-	"compose.cancelTooLate": "Too late to cancel: the message is already being sent."
+	"compose.cancelTooLate": "Too late to cancel: the message is already being sent.",
+	"admin.nav.database": "Database Explorer",
+	"admin.section.database": "Inspect tables, explore records, and execute D1 queries from anywhere."
 }

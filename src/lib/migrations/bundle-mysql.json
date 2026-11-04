@@ -254,6 +254,15 @@
       "statements": [
         "UPDATE `users` SET `remote_content_mode` = 'ask' WHERE `remote_content_mode` = 'allow';"
       ]
+    },
+    {
+      "name": "0004_add_email_router_send_logs.sql",
+      "statements": [
+        "CREATE TABLE `email_router_send_logs` (\n\t`id` varchar(191) NOT NULL,\n\t`project_id` varchar(191) NOT NULL,\n\t`provider_cred_id` longtext NOT NULL,\n\t`provider` varchar(191) NOT NULL,\n\t`to_address` longtext NOT NULL,\n\t`subject` longtext,\n\t`status` longtext NOT NULL,\n\t`provider_message_id` longtext,\n\t`error_message` longtext,\n\t`latency_ms` bigint NOT NULL DEFAULT 0,\n\t`sent_at` bigint NOT NULL,\n\t`date_bucket` varchar(191) NOT NULL,\n\t`html_snippet` longtext,\n\t`text_content` longtext,\n\tCONSTRAINT `email_router_send_logs_id` PRIMARY KEY(`id`)\n);",
+        "CREATE INDEX `email_router_send_logs_project_date_idx` ON `email_router_send_logs` (`project_id`,`date_bucket`);",
+        "CREATE INDEX `email_router_send_logs_provider_date_idx` ON `email_router_send_logs` (`provider`,`date_bucket`);",
+        "CREATE INDEX `email_router_send_logs_sent_at_idx` ON `email_router_send_logs` (`sent_at`);"
+      ]
     }
   ]
 }

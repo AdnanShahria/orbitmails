@@ -6,18 +6,40 @@
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { mailboxes } from "@/db/schema";
+import { mailboxes, messages } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { getEmailAddress, getEmailDisplayName } from "@/lib/email/address";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
 import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { getSendErrorStatus } from "@/app/api/send/error-utils";
+import { buildSnippet } from "@/lib/email/parse";
+import { normalizeMessageId } from "@/lib/email/threading";
+import { storeMessageAttachments } from "@/lib/email/attachments";
+import type { OutboundProviderMessage } from "@/lib/email/outbound-provider-types";
 import {
 	authenticateIngestionRequest,
 	authorizeDomainForProject,
 } from "./auth";
 import { enqueueEmailBatch, enqueueEmailJob } from "@/lib/mailhub/high-throughput";
+import {
+	buildCandidateProviders,
+	getQuotaKey,
+	getTodayDateBucket,
+} from "@/lib/mailhub/router";
+import {
+	markQuotaSliceExhausted,
+	sendWithFailover,
+} from "@/lib/mailhub/failover";
+import {
+	checkAndIncrementQuota,
+	refundQuota,
+} from "@/lib/router/quota-client";
+import {
+	createSendLogEntry,
+	flushBatchToD1,
+} from "@/lib/mailhub/logging";
+import type { RankedProvider } from "@/lib/mailhub/types";
 import { normalizePayload } from "./normalizer";
 import {
 	batchEmailSchema,
@@ -168,8 +190,248 @@ export async function sendSingleNormalizedMessage(
 		...(auth.projectSlug ? { "X-MailHub-Project": auth.projectSlug } : {}),
 		...(auth.keyId ? { "X-MailHub-Key": auth.keyId } : {}),
 	};
+	if (payload.replyTo) {
+		headers["Reply-To"] = payload.replyTo;
+	}
+	if (payload.inReplyTo) {
+		headers["In-Reply-To"] = payload.inReplyTo;
+	}
+	if (payload.references) {
+		headers.References = Array.isArray(payload.references)
+			? payload.references.join(" ")
+			: payload.references;
+	}
 
-	// 4. Construct SendEmailInput
+	// 4. When auth.projectId is present (from a validated om_live_... routing key):
+	// Route through MailHub intelligent candidate ranking, atomic quota check, failover waterfall, and send logging.
+	if (auth.projectId) {
+		const dateBucket = getTodayDateBucket();
+
+		// 4a. Build candidate providers for this project
+		const candidates = await buildCandidateProviders(auth.projectId, dateBucket, env as any);
+
+		// 4b. Check and acquire atomic quota via QuotaCoordinator / KV
+		let acquiredCandidate: RankedProvider | null = null;
+		let effectiveCandidates: RankedProvider[] = [];
+
+		for (let i = 0; i < candidates.length; i++) {
+			const candidate = candidates[i];
+
+			// Provider with unlimited daily slice (e.g. SES)
+			if (!candidate.dailySlice || candidate.dailySlice <= 0) {
+				acquiredCandidate = candidate;
+				effectiveCandidates = candidates.slice(i);
+				break;
+			}
+
+			// Check KV quota cache if KV is bound
+			if (env.KV) {
+				try {
+					const kvKey = getQuotaKey(auth.projectId, candidate.providerCredId, dateBucket);
+					const stored = (await env.KV.get(kvKey, "json")) as {
+						exhausted?: boolean;
+						used?: number;
+					} | null;
+
+					if (stored?.exhausted || (typeof stored?.used === "number" && stored.used >= candidate.dailySlice)) {
+						continue;
+					}
+				} catch {
+					// Fall through to atomic DO check
+				}
+			}
+
+			// Atomic check & increment via QuotaCoordinator / LocalQuotaFallback
+			try {
+				const quotaRes = await checkAndIncrementQuota(env, {
+					projectId: auth.projectId,
+					providerId: candidate.providerCredId,
+					sliceLimit: candidate.dailySlice,
+					dateBucket,
+				});
+
+				if (!quotaRes.allowed) {
+					await markQuotaSliceExhausted(
+						auth.projectId,
+						candidate.providerCredId,
+						dateBucket,
+						env as any,
+						candidate.dailySlice,
+					);
+					continue;
+				}
+
+				acquiredCandidate = candidate;
+				effectiveCandidates = candidates.slice(i);
+				break;
+			} catch (err) {
+				console.warn(`[MailHub Quota] Check failed for ${candidate.providerCredId}:`, err);
+				acquiredCandidate = candidate;
+				effectiveCandidates = candidates.slice(i);
+				break;
+			}
+		}
+
+		if (!acquiredCandidate && effectiveCandidates.length === 0) {
+			effectiveCandidates = candidates.filter((c) => !c.dailySlice || c.dailySlice <= 0);
+		}
+
+		// 4c. Execute delivery via sendWithFailover
+		const outboundMessage: OutboundProviderMessage = {
+			from: payload.from,
+			to: payload.to,
+			cc: payload.cc.length > 0 ? payload.cc : undefined,
+			bcc: payload.bcc.length > 0 ? payload.bcc : undefined,
+			subject: payload.subject,
+			html: payload.html,
+			text: payload.text,
+			headers,
+			attachments: payload.attachments.length > 0 ? payload.attachments : undefined,
+		};
+
+		const failoverResult = await sendWithFailover({
+			env: env as any,
+			projectId: auth.projectId,
+			deliveryId: newId("dlv"),
+			message: outboundMessage,
+			candidates: effectiveCandidates.length > 0 ? effectiveCandidates : candidates,
+			dateBucket,
+		});
+
+		// 4d. Post-send handling: adjust quota, record Sent copy in D1 messages, and log
+		if (failoverResult.success) {
+			// If failover routed to a different provider than the initially acquired one, reconcile quota
+			if (acquiredCandidate && acquiredCandidate.dailySlice > 0) {
+				if (failoverResult.providerCredId !== acquiredCandidate.providerCredId) {
+					await refundQuota(env, {
+						projectId: auth.projectId,
+						providerId: acquiredCandidate.providerCredId,
+						dateBucket,
+					});
+
+					const actualCandidate = candidates.find((c) => c.providerCredId === failoverResult.providerCredId);
+					if (actualCandidate && actualCandidate.dailySlice > 0) {
+						await checkAndIncrementQuota(env, {
+							projectId: auth.projectId,
+							providerId: actualCandidate.providerCredId,
+							sliceLimit: actualCandidate.dailySlice,
+							dateBucket,
+						});
+					}
+				}
+			}
+
+			const messageRecordId = newId("msg");
+			const db = getDb(env);
+
+			// Record Sent copy into user's messages table in D1 so email appears in webmail Sent box
+			try {
+				await db.insert(messages).values({
+					id: messageRecordId,
+					userId: authDomain.domain.userId,
+					mailboxId,
+					direction: "outbound",
+					providerMessageId: failoverResult.providerMessageId || failoverResult.messageId,
+					fromAddr: payload.from,
+					toAddr: payload.to.join(", "),
+					ccAddr: payload.cc.length > 0 ? payload.cc.join(", ") : null,
+					bccAddr: payload.bcc.length > 0 ? payload.bcc.join(", ") : null,
+					replyTo: payload.replyTo || null,
+					subject: payload.subject,
+					snippet: buildSnippet(payload.text ?? null, payload.html ?? null),
+					textBody: payload.text ?? null,
+					htmlBody: payload.html ?? null,
+					status: "sent",
+					read: true,
+					threadId: normalizeMessageId(failoverResult.messageId) || messageRecordId,
+					inReplyTo: payload.inReplyTo ? normalizeMessageId(payload.inReplyTo) : null,
+					references: payload.references
+						? Array.isArray(payload.references)
+							? payload.references.join(" ")
+							: payload.references
+						: null,
+					createdAt: new Date(),
+				});
+
+				if (payload.attachments && payload.attachments.length > 0 && env.BUCKET) {
+					await storeMessageAttachments(
+						env,
+						messageRecordId,
+						payload.attachments.map((att) => ({
+							filename: att.filename,
+							type: att.type,
+							content: att.content,
+							disposition: att.disposition,
+							contentId: att.contentId,
+						})),
+					).catch((err) => console.warn("[MailHub] Attachment storage skipped:", err));
+				}
+			} catch (dbErr) {
+				console.error("[MailHub Ingestion] Failed to record Sent copy in messages table:", dbErr);
+			}
+
+			// Record send log in email_router_send_logs via createSendLogEntry & flushBatchToD1
+			try {
+				const logEntry = createSendLogEntry({
+					projectId: auth.projectId,
+					providerCredId: failoverResult.providerCredId || "unknown",
+					provider: failoverResult.provider || "unknown",
+					toAddress: payload.to.join(", "),
+					subject: payload.subject,
+					htmlSnippet: payload.html ? payload.html.slice(0, 1500) : null,
+					textContent: payload.text ? payload.text.slice(0, 1000) : null,
+					status: "sent",
+					providerMessageId: failoverResult.providerMessageId || failoverResult.messageId,
+					latencyMs: failoverResult.latencyMs || 0,
+					sentAt: failoverResult.timestamp || Date.now(),
+				});
+				await flushBatchToD1([logEntry], env as any);
+			} catch (logErr) {
+				console.error("[MailHub Ingestion] Failed to record send log:", logErr);
+			}
+
+			return {
+				id: failoverResult.messageId,
+				messageId: failoverResult.messageId,
+			};
+		}
+
+		// Failed across all candidates: refund acquired quota slot
+		if (acquiredCandidate && acquiredCandidate.dailySlice > 0) {
+			await refundQuota(env, {
+				projectId: auth.projectId,
+				providerId: acquiredCandidate.providerCredId,
+				dateBucket,
+			});
+		}
+
+		// Record failure log
+		try {
+			const lastAttempt = failoverResult.failedAttempts?.[failoverResult.failedAttempts.length - 1];
+			const logEntry = createSendLogEntry({
+				projectId: auth.projectId,
+				providerCredId: lastAttempt?.providerCredId || "all_failed",
+				provider: lastAttempt?.provider || "unknown",
+				toAddress: payload.to.join(", "),
+				subject: payload.subject,
+				htmlSnippet: payload.html ? payload.html.slice(0, 1500) : null,
+				textContent: payload.text ? payload.text.slice(0, 1000) : null,
+				status: failoverResult.queued ? "queued" : "failed",
+				errorMessage: failoverResult.message || "Delivery failed across all providers",
+				latencyMs: 0,
+				sentAt: Date.now(),
+			});
+			await flushBatchToD1([logEntry], env as any);
+		} catch {}
+
+		const error = new Error(failoverResult.message || "Email delivery failed across all candidate providers");
+		(error as any).statusCode = 500;
+		(error as any).name = "delivery_failed";
+		throw error;
+	}
+
+	// 5. When auth.projectId is not set (e.g. legacy user/admin mailbox API key):
+	// Preserve existing sendEmail(env, sendInput) path
 	const sendInput: SendEmailInput = {
 		userId: auth.userId,
 		mailboxId,
@@ -337,6 +599,26 @@ export async function processIngestionRequest(
 		const payloads = handleRecipientSplitting(normalized);
 
 		if (isAsyncRequested) {
+			if (payloads.length > 1) {
+				const enqueuedBatch = await enqueueEmailBatch(
+					env,
+					auth.projectId || "default",
+					auth.projectSlug || "default",
+					payloads,
+					{ routingKeyId: auth.keyId },
+				);
+				return Response.json(
+					{
+						id: enqueuedBatch[0]?.id,
+						status: "queued",
+					},
+					{
+						status: 202,
+						headers: { "Content-Type": "application/json", ...rateLimitHeaders },
+					},
+				);
+			}
+
 			const enqueued = await enqueueEmailJob(
 				env,
 				auth.projectId || "default",

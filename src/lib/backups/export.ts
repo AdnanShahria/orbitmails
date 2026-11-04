@@ -48,6 +48,8 @@ export const INTERNAL_TABLES = [
 	"push_subscriptions",
 	// Import jobs are transient progress records tied to staged objects that a backup does not carry.
 	"import_jobs",
+	// Send logs are high-throughput telemetry/analytics logs, internally managed.
+	"email_router_send_logs",
 ];
 
 /**

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { messages } from "@/db/schema";
 import { getEnv } from "@/lib/cloudflare";
@@ -41,7 +41,14 @@ export async function GET(
 	const [message] = await db
 		.select()
 		.from(messages)
-		.where(eq(messages.id, id))
+		.where(
+			or(
+				eq(messages.id, id),
+				eq(messages.id, `<${id}>`),
+				eq(messages.providerMessageId, id),
+				eq(messages.providerMessageId, `<${id}>`),
+			),
+		)
 		.limit(1);
 
 	if (!message) {
@@ -70,7 +77,7 @@ export async function GET(
 			text: message.textBody,
 			bcc: message.bccAddr ? [message.bccAddr] : null,
 			cc: message.ccAddr ? [message.ccAddr] : null,
-			reply_to: null,
+			reply_to: message.replyTo ? [message.replyTo] : null,
 			last_event: lastEvent,
 		},
 		{

@@ -7,9 +7,11 @@ import {
   Clock,
   RefreshCw,
   Send,
+  ShieldAlert,
   X,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/auth/client";
 import type { MailHubProject, ProviderId } from "./types";
 import { getProviderDisplayName } from "./utils";
 
@@ -36,11 +38,14 @@ export function TestSendDialog({
   const [subject, setSubject] = useState("MailHub Test Dispatch: Intelligent Failover Verification");
   const [routingMode, setRoutingMode] = useState<"auto" | ProviderId>("auto");
   const [isSending, setIsSending] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resultTrace, setResultTrace] = useState<{
     success: boolean;
     providerUsed: ProviderId;
     latencyMs: number;
-    waterfall: Array<{ provider: string; status: number; message: string }>;
+    messageId?: string;
+    deliveryId?: string;
+    waterfall: Array<{ provider: string; status: number; message?: string; error?: string; latencyMs?: number }>;
   } | null>(null);
 
   if (!isOpen || !project) return null;
@@ -48,62 +53,72 @@ export function TestSendDialog({
   async function handleExecuteTest() {
     if (!project) return;
     setIsSending(true);
+    setErrorMessage(null);
     setResultTrace(null);
 
-    // Simulate real routing waterfall through the engine
-    await new Promise((r) => setTimeout(r, 650));
-
-    let providerUsed: ProviderId = project.primaryProvider;
-    let waterfall: Array<{ provider: string; status: number; message: string }> = [];
-
-    if (routingMode === "auto") {
-      // If Aurelia slice is saturated (95%), simulate failover to Resend
-      if (project.sentToday >= project.dailyQuotaSlice - 5) {
-        waterfall.push({
-          provider: getProviderDisplayName(project.primaryProvider),
-          status: 429,
-          message: `Daily project quota reached (${project.sentToday}/${project.dailyQuotaSlice}). Rerouting to fallback.`,
-        });
-        providerUsed = project.fallbackChain[0] || "resend";
-        waterfall.push({
-          provider: getProviderDisplayName(providerUsed),
-          status: 200,
-          message: "Dispatched successfully via fallback provider.",
-        });
-      } else {
-        waterfall.push({
-          provider: getProviderDisplayName(project.primaryProvider),
-          status: 200,
-          message: "Dispatched via primary provider within allocated quota slice.",
-        });
-      }
-    } else {
-      providerUsed = routingMode;
-      waterfall.push({
-        provider: getProviderDisplayName(routingMode),
-        status: 200,
-        message: "Dispatched via forced provider override.",
+    try {
+      const res = await authFetch("/api/admin/mailhub/test-send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id,
+          recipient,
+          subject,
+          routingMode: routingMode === "auto" ? undefined : routingMode,
+        }),
       });
+
+      const data = (await res.json().catch(() => null)) as any;
+
+      if (!res.ok || !data?.success) {
+        const errorText = data?.error || `Failed to send test email (HTTP ${res.status})`;
+        setErrorMessage(typeof errorText === "string" ? errorText : JSON.stringify(errorText));
+        setIsSending(false);
+        return;
+      }
+
+      const resResult = data.result || {};
+      const providerUsed: ProviderId = resResult.providerUsed || project.primaryProvider;
+      const latencyMs: number = resResult.latencyMs || 150;
+      const waterfall: Array<{ provider: string; status: number; message?: string; error?: string; latencyMs?: number }> =
+        resResult.waterfall ||
+        resResult.attempts?.map((a: any) => ({
+          provider: getProviderDisplayName(a.provider),
+          status: a.status || 200,
+          message: a.status === 200 ? "Dispatched successfully" : a.error || "Attempt failed",
+          latencyMs: a.latencyMs,
+        })) || [
+          {
+            provider: getProviderDisplayName(providerUsed),
+            status: 200,
+            message: "Dispatched via live routing engine.",
+            latencyMs,
+          },
+        ];
+
+      const trace = {
+        success: true,
+        providerUsed,
+        latencyMs,
+        messageId: resResult.messageId,
+        deliveryId: resResult.deliveryId,
+        waterfall,
+      };
+
+      setResultTrace(trace);
+      setIsSending(false);
+
+      onSuccessSend?.({
+        projectId: project.id,
+        recipient,
+        subject,
+        provider: providerUsed,
+        latencyMs,
+      });
+    } catch (err: any) {
+      setErrorMessage(err.message || "Network error while triggering test email");
+      setIsSending(false);
     }
-
-    const latency = 168 + Math.floor(Math.random() * 95);
-    const trace = {
-      success: true,
-      providerUsed,
-      latencyMs: latency,
-      waterfall,
-    };
-
-    setResultTrace(trace);
-    setIsSending(false);
-
-    onSuccessSend?.({
-      projectId: project.id,
-      recipient,
-      subject,
-      provider: providerUsed,
-      latencyMs: latency,
-    });
   }
 
   return (
@@ -113,19 +128,19 @@ export function TestSendDialog({
       aria-labelledby="test-send-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      {/* Backdrop */}
+      {/* Backdrop with Apple blur */}
       <div
-        className="fixed inset-0 bg-neutral-900/40 backdrop-blur-xs transition-opacity"
+        className="fixed inset-0 bg-neutral-900/50 backdrop-blur-md transition-opacity"
         onClick={onClose}
       />
 
       {/* Dialog Box */}
-      <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-xl dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900 animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-neutral-100 dark:border-neutral-800">
-          <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 dark:border-neutral-800">
+          <div className="flex items-center gap-3">
             <div
-              className={`flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold text-white ${project.brandColor}`}
+              className={`flex h-10 w-10 items-center justify-center rounded-2xl text-xs font-bold text-white shadow-xs ${project.brandColor}`}
             >
               {project.avatarInitials}
             </div>
@@ -137,47 +152,48 @@ export function TestSendDialog({
                 Trigger Test Email ({project.name})
               </h3>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                Test routing rules and multi-provider failover without modifying code
+                Execute live dispatch and inspect multi-provider waterfall routing
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="rounded-full p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+            aria-label="Close dialog"
+            className="flex h-11 w-11 items-center justify-center rounded-xl text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-200 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Form Body */}
-        <div className="mt-4 space-y-4">
+        <div className="mt-5 space-y-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
               Recipient Address
             </label>
             <input
               type="email"
               value={recipient}
               onChange={(e) => setRecipient(e.target.value)}
-              className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
               Subject Line
             </label>
             <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
               Routing Policy
             </label>
             <select
@@ -185,10 +201,10 @@ export function TestSendDialog({
               onChange={(e) =>
                 setRoutingMode(e.target.value as "auto" | ProviderId)
               }
-              className="mt-1 h-9 w-full rounded-xl border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-800 focus:border-blue-500 focus:outline-none dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs font-medium text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
             >
               <option value="auto">
-                Automatic Smart Waterfall (Primary + Quota Slice Check + Fallback)
+                Automatic Smart Waterfall (Primary + Quota Slice + Fallback)
               </option>
               <option value="brevo">Force Brevo</option>
               <option value="resend">Force Resend</option>
@@ -198,24 +214,71 @@ export function TestSendDialog({
             </select>
           </div>
 
-          {/* Result Waterfall Trace */}
+          {/* Error Banner */}
+          {errorMessage && (
+            <div className="rounded-2xl border border-rose-200/80 bg-rose-50/80 p-3.5 text-xs dark:border-rose-900/60 dark:bg-rose-950/30">
+              <div className="flex items-start gap-2 text-rose-800 dark:text-rose-300">
+                <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                <div className="min-w-0">
+                  <span className="font-semibold">Dispatch Failed: </span>
+                  <span>{errorMessage}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Live Result Waterfall Trace */}
           {resultTrace && (
-            <div className="rounded-2xl border border-emerald-200/70 bg-emerald-50/50 p-3.5 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/20">
+            <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/60 p-4 text-xs dark:border-emerald-900/60 dark:bg-emerald-950/30">
               <div className="flex items-center justify-between font-semibold text-emerald-800 dark:text-emerald-300">
-                <span className="flex items-center gap-1.5">
+                <span className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  Email Dispatched Successfully
+                  Live Dispatch Completed
                 </span>
-                <span className="font-mono">{resultTrace.latencyMs}ms</span>
+                <span className="font-mono text-xs bg-emerald-100/70 dark:bg-emerald-900/50 px-2 py-0.5 rounded-md">
+                  {resultTrace.latencyMs}ms
+                </span>
               </div>
 
-              <div className="mt-2 space-y-1.5 border-t border-emerald-200/50 pt-2 text-neutral-700 dark:border-emerald-900/40 dark:text-neutral-300">
+              {resultTrace.messageId && (
+                <div className="mt-2 text-[11px] font-mono text-emerald-900/80 dark:text-emerald-300/80 truncate">
+                  Message-ID: {resultTrace.messageId}
+                </div>
+              )}
+
+              <div className="mt-3 space-y-2 border-t border-emerald-200/60 pt-2.5 text-neutral-800 dark:border-emerald-900/50 dark:text-neutral-200">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
+                  Live Waterfall Steps:
+                </div>
                 {resultTrace.waterfall.map((step, idx) => (
-                  <div key={idx} className="flex items-start gap-1.5">
-                    <span className="font-semibold text-neutral-900 dark:text-neutral-100">
-                      [{step.provider}]:
-                    </span>
-                    <span>{step.message}</span>
+                  <div
+                    key={idx}
+                    className="flex items-start justify-between gap-2 rounded-xl bg-white/70 dark:bg-neutral-800/60 p-2.5 border border-emerald-100 dark:border-emerald-950"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+                        {step.provider}:
+                      </span>{" "}
+                      <span className="text-neutral-600 dark:text-neutral-300">
+                        {step.message || step.error || "Processed"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span
+                        className={`font-mono text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                          step.status === 200
+                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                            : "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+                        }`}
+                      >
+                        HTTP {step.status}
+                      </span>
+                      {step.latencyMs !== undefined && (
+                        <span className="font-mono text-[10px] text-neutral-400">
+                          {step.latencyMs}ms
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -224,12 +287,12 @@ export function TestSendDialog({
         </div>
 
         {/* Modal Actions */}
-        <div className="mt-6 flex items-center justify-end gap-2 border-t border-neutral-100 pt-4 dark:border-neutral-800">
+        <div className="mt-6 flex items-center justify-end gap-3 border-t border-neutral-100 pt-4 dark:border-neutral-800">
           <Button
             variant="outline"
             size="sm"
             onClick={onClose}
-            className="rounded-xl border-neutral-200 text-xs font-medium dark:border-neutral-700"
+            className="min-h-[44px] px-4 rounded-xl border-neutral-200 text-xs font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800"
           >
             Close
           </Button>
@@ -239,12 +302,12 @@ export function TestSendDialog({
             size="sm"
             disabled={isSending}
             onClick={handleExecuteTest}
-            className="gap-1.5 rounded-xl bg-blue-600 text-xs font-medium text-white hover:bg-blue-700"
+            className="min-h-[44px] px-5 gap-2 rounded-xl bg-blue-600 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
           >
             {isSending ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              <RefreshCw className="h-4 w-4 animate-spin" />
             ) : (
-              <Send className="h-3.5 w-3.5" />
+              <Send className="h-4 w-4" />
             )}
             {isSending ? "Routing & Sending..." : "Send Test Now"}
           </Button>

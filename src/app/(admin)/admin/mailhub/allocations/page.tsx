@@ -25,6 +25,7 @@ import { ProviderPriorityReorder, type ProviderItem } from "@/components/mailhub
 import { RoutingKeyModal, type KeyItem } from "@/components/mailhub/routing-key-modal";
 import { ProviderCredentialsModal, type ProviderConfigItem } from "@/components/mailhub/provider-credentials-modal";
 import { AddProjectModal } from "@/components/mailhub/add-project-modal";
+import { MailHubNavTabs } from "@/app/(admin)/mailhub/mailhub-nav-tabs";
 
 // Distinct color assignments for top projects
 const PROJECT_COLORS: Record<string, { bar: string; badge: string; text: string }> = {
@@ -335,6 +336,11 @@ export default function MailHubAllocationsPage() {
 
 	return (
 		<div className="space-y-8 pb-12">
+			{/* Segmented Apple HIG Navigation Tabs */}
+			<div className="flex items-center justify-between">
+				<MailHubNavTabs />
+			</div>
+
 			{/* Page Header */}
 			<div className="flex flex-wrap items-center justify-between gap-4">
 				<div>

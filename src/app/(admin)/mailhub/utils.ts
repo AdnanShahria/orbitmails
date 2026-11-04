@@ -107,6 +107,30 @@ export function getProviderDisplayName(id: ProviderId): string {
   }
 }
 
+export function normalizeProviderId(providerStr?: string | null): ProviderId {
+  const p = (providerStr || "brevo").toLowerCase();
+  if (p.includes("resend")) return "resend";
+  if (p.includes("ses")) return "ses";
+  if (p.includes("zepto")) return "zepto";
+  if (p.includes("cloudflare")) return "cloudflare";
+  return "brevo";
+}
+
+export function getProviderBrand(id: ProviderId): { bg: string; fg: string } {
+  switch (id) {
+    case "brevo":
+      return { bg: "bg-blue-600", fg: "text-white" };
+    case "resend":
+      return { bg: "bg-neutral-900 dark:bg-neutral-100", fg: "text-white dark:text-neutral-900" };
+    case "ses":
+      return { bg: "bg-amber-600", fg: "text-white" };
+    case "zepto":
+      return { bg: "bg-purple-600", fg: "text-white" };
+    case "cloudflare":
+      return { bg: "bg-orange-500", fg: "text-white" };
+  }
+}
+
 export function formatTimeAgo(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();

@@ -1121,6 +1121,27 @@ export const importJobs = sqliteTable("import_jobs", {
 	finishedAt: timestamp("finished_at"),
 }, (t) => [index("import_jobs_user_idx").on(t.userId, t.createdAt), index("import_jobs_status_idx").on(t.status, t.updatedAt)]);
 
+export const emailRouterSendLogs = sqliteTable("email_router_send_logs", {
+	id: text("id").primaryKey(),
+	projectId: text("project_id").notNull(),
+	providerCredId: text("provider_cred_id").notNull(),
+	provider: text("provider").notNull(),
+	toAddress: text("to_address").notNull(),
+	subject: text("subject"),
+	status: text("status").notNull(),
+	providerMessageId: text("provider_message_id"),
+	errorMessage: text("error_message"),
+	latencyMs: integer("latency_ms").notNull().default(0),
+	sentAt: integer("sent_at").notNull(),
+	dateBucket: text("date_bucket").notNull(),
+	htmlSnippet: text("html_snippet"),
+	textContent: text("text_content"),
+}, (t) => [
+	index("email_router_send_logs_project_date_idx").on(t.projectId, t.dateBucket),
+	index("email_router_send_logs_provider_date_idx").on(t.provider, t.dateBucket),
+	index("email_router_send_logs_sent_at_idx").on(t.sentAt),
+]);
+
 export const schema = {
 	users,
 	domains,
@@ -1163,4 +1184,5 @@ export const schema = {
 	agentSendApprovals,
 	mcpKeyMailboxes,
 	importJobs,
+	emailRouterSendLogs,
 };

@@ -275,6 +275,15 @@
       "statements": [
         "UPDATE \"users\" SET \"remote_content_mode\" = 'ask' WHERE \"remote_content_mode\" = 'allow';"
       ]
+    },
+    {
+      "name": "0004_add_email_router_send_logs.sql",
+      "statements": [
+        "CREATE TABLE \"email_router_send_logs\" (\n\t\"id\" text PRIMARY KEY NOT NULL,\n\t\"project_id\" text NOT NULL,\n\t\"provider_cred_id\" text NOT NULL,\n\t\"provider\" text NOT NULL,\n\t\"to_address\" text NOT NULL,\n\t\"subject\" text,\n\t\"status\" text NOT NULL,\n\t\"provider_message_id\" text,\n\t\"error_message\" text,\n\t\"latency_ms\" bigint DEFAULT 0 NOT NULL,\n\t\"sent_at\" bigint NOT NULL,\n\t\"date_bucket\" text NOT NULL,\n\t\"html_snippet\" text,\n\t\"text_content\" text\n);",
+        "CREATE INDEX \"email_router_send_logs_project_date_idx\" ON \"email_router_send_logs\" USING btree (\"project_id\",\"date_bucket\");",
+        "CREATE INDEX \"email_router_send_logs_provider_date_idx\" ON \"email_router_send_logs\" USING btree (\"provider\",\"date_bucket\");",
+        "CREATE INDEX \"email_router_send_logs_sent_at_idx\" ON \"email_router_send_logs\" USING btree (\"sent_at\");"
+      ]
     }
   ]
 }

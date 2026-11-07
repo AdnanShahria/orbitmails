@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { domains as domainsTable, users } from "@/db/schema";
 import { getEnv } from "@/lib/cloudflare";
 import { requireUser } from "@/lib/auth/cookies";
 import { canManageDomains } from "@/lib/auth/admin";
@@ -12,16 +15,34 @@ import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 export async function GET(request: NextRequest) {
 	const env = getEnv();
 	const user = await requireUser(env, request);
+	const db = getDb(env);
 	const domainOwnerId = user.canManageMailboxes && user.createdByUserId ? user.createdByUserId : user.id;
-	const domains = await listUserDomains(env, domainOwnerId);
+	let domainList = await listUserDomains(env, domainOwnerId);
+
+	const forMailbox = request.nextUrl.searchParams.get("forMailbox") === "true";
+	if (forMailbox) {
+		const [primaryAdmin] = await db.select({ id: users.id }).from(users).where(eq(users.isPrimaryAdmin, true)).limit(1);
+		if (primaryAdmin && primaryAdmin.id !== domainOwnerId) {
+			const platformDomains = await db
+				.select()
+				.from(domainsTable)
+				.where(and(eq(domainsTable.userId, primaryAdmin.id), eq(domainsTable.status, "active")));
+			const existingIds = new Set(domainList.map((d) => d.id));
+			for (const pd of platformDomains) {
+				if (!existingIds.has(pd.id)) {
+					domainList = [...domainList, pd];
+				}
+			}
+		}
+	}
 
 	const includeDns = request.nextUrl.searchParams.get("includeDns") === "true";
 
 	const dns: Record<string, DnsStatusSummary> = {};
-	let domainViews = domains;
+	let domainViews = domainList;
 	if (includeDns) {
 		const results = await Promise.allSettled(
-			domains.map(async (domain) => {
+			domainList.map(async (domain) => {
 				const { summary, sendingEnabled } = await summariseDomainDns(env, domain);
 				return { id: domain.id, summary, sendingEnabled };
 			}),
@@ -33,7 +54,7 @@ export async function GET(request: NextRequest) {
 				sendingEnabledByDomain.set(r.value.id, r.value.sendingEnabled);
 			}
 		}
-		domainViews = domains.map((domain) => ({
+		domainViews = domainList.map((domain) => ({
 			...domain,
 			sendingEnabled: sendingEnabledByDomain.get(domain.id) ?? domain.sendingEnabled,
 		}));

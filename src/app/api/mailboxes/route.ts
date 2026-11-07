@@ -62,9 +62,19 @@ export async function POST(request: Request) {
 		.from(domains)
 		.where(eq(domains.id, parsed.data.domainId))
 		.limit(1);
+
+	// Check if this domain is a platform domain owned by the primary admin
+	const [primaryAdmin] = await db
+		.select({ id: users.id })
+		.from(users)
+		.where(eq(users.isPrimaryAdmin, true))
+		.limit(1);
+	const isPlatformDomain = domain && primaryAdmin && domain.userId === primaryAdmin.id;
+
 	const canUseDomain = domain && (
 		domain.userId === user.id ||
-		(user.canManageMailboxes && !!user.createdByUserId && domain.userId === user.createdByUserId)
+		(user.canManageMailboxes && !!user.createdByUserId && domain.userId === user.createdByUserId) ||
+		isPlatformDomain
 	);
 	if (!canUseDomain) {
 		return NextResponse.json({ error: "Domain not found" }, { status: 404 });

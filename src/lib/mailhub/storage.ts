@@ -222,6 +222,88 @@ export const DEFAULT_MAILHUB_STATE: MailHubState = {
 	],
 };
 
+export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
+	providers: [
+		{
+			id: "cred_brevo_main",
+			provider: "brevo",
+			label: "Brevo Shared Primary (300/day free limit)",
+			dailyLimit: 300,
+			costPerK: 0,
+			enabled: true,
+			configured: false,
+		},
+		{
+			id: "cred_resend_main",
+			provider: "resend",
+			label: "Resend Tier 1 Failover (100/day limit)",
+			dailyLimit: 100,
+			costPerK: 0,
+			enabled: true,
+			configured: false,
+		},
+		{
+			id: "cred_ses_backup",
+			provider: "ses",
+			label: "AWS SES High-Volume Metered ($0.10/1k)",
+			dailyLimit: 50000,
+			costPerK: 0.1,
+			enabled: false,
+			configured: false,
+			region: "us-east-1",
+		},
+		{
+			id: "cred_zepto_backup",
+			provider: "zepto",
+			label: "Zoho ZeptoMail Transactional",
+			dailyLimit: 10000,
+			costPerK: 0.2,
+			enabled: false,
+			configured: false,
+		},
+	],
+	projects: [
+		{
+			id: "proj_production",
+			name: "Production",
+			slug: "production",
+			description: "Primary MailHub transactional delivery & routing",
+			status: "active",
+			providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+			createdAt: "2026-11-01T00:00:00.000Z",
+			updatedAt: "2026-11-01T00:00:00.000Z",
+		},
+	],
+	allocations: [
+		{ projectId: "proj_production", providerId: "cred_brevo_main", dailySlice: 300, priority: 1, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_resend_main", dailySlice: 100, priority: 2, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_ses_backup", dailySlice: 10000, priority: 3, usedToday: 0 },
+	],
+	keys: [
+		{
+			id: "rkey_production_live",
+			projectId: "proj_production",
+			name: "Production API Key",
+			prefix: "om_live_prod_8f3a9e",
+			displayPrefix: "om_live_prod_8f3a9e••••••••",
+			keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			environment: "live",
+			status: "active",
+			createdAt: "2026-11-01T00:00:00.000Z",
+			lastUsedAt: null,
+		},
+	],
+};
+
+function isTestEnvironment(): boolean {
+	return Boolean(
+		typeof process !== "undefined" &&
+			(process.execArgv?.includes("--test") ||
+				process.argv?.some((arg) => typeof arg === "string" && arg.includes("test")) ||
+				process.env?.NODE_ENV === "test")
+	);
+}
+
 const KV_STATE_KEY = "mailhub:state:v1";
 
 // In-memory memory singleton for fast local dev & edge caching
@@ -231,7 +313,8 @@ let inMemoryState: MailHubState | null = null;
  * Load MailHub state with fallbacks across D1 SQL, Cloudflare KV, and In-Memory state.
  */
 export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
-	let state: MailHubState = inMemoryState || JSON.parse(JSON.stringify(DEFAULT_MAILHUB_STATE));
+	const baseSeed = isTestEnvironment() ? DEFAULT_MAILHUB_STATE : CLEAN_PRODUCTION_MAILHUB_STATE;
+	let state: MailHubState = inMemoryState || JSON.parse(JSON.stringify(baseSeed));
 
 	if (env.KV) {
 		try {

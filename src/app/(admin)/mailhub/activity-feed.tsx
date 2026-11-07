@@ -31,6 +31,7 @@ import {
 
 interface ActivityFeedProps {
   activities: MailHubActivityItem[];
+  projects?: Array<{ id: string; name: string }>;
   selectedProjectFilter?: string | null;
   onSelectProjectFilter?: (projectId: string | null) => void;
   onRefresh?: () => void;
@@ -40,10 +41,11 @@ interface ActivityFeedProps {
 
 export function ActivityFeed({
   activities,
+  projects = [],
   selectedProjectFilter = null,
   onSelectProjectFilter,
   onRefresh,
-  isStreaming = true,
+  isStreaming = false,
   onToggleStreaming,
 }: ActivityFeedProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -107,7 +109,7 @@ export function ActivityFeed({
                   isStreaming ? "animate-pulse bg-emerald-500" : "bg-neutral-400"
                 }`}
               />
-              {isStreaming ? "Live (5s poll)" : "Stream Paused"}
+              {isStreaming ? "Live (30s poll)" : "Stream Paused"}
             </span>
           </div>
           <p className="text-xs text-neutral-600 dark:text-neutral-300">
@@ -139,10 +141,13 @@ export function ActivityFeed({
             className="min-h-[44px] rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 shadow-2xs"
           >
             <option value="">All Projects</option>
-            <option value="proj_aurelia">Aurelia</option>
-            <option value="proj_lifesolver">LifeSolver</option>
-            <option value="proj_luvio">Luvio</option>
-            <option value="proj_ovijatric">Ovijatric</option>
+            {projects && projects.length > 0
+              ? projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))
+              : null}
           </select>
 
           {/* Live stream toggle */}

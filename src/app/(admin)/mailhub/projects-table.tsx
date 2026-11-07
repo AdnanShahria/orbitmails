@@ -7,6 +7,7 @@ import {
   Copy,
   ExternalLink,
   Play,
+  Plus,
   RefreshCw,
   Send,
   Settings2,
@@ -24,6 +25,7 @@ interface ProjectsTableProps {
   onOpenTestSend: (project: MailHubProject) => void;
   onOpenQuotaModal: (project: MailHubProject) => void;
   onFilterProjectLogs: (projectId: string) => void;
+  onOpenAddProject?: () => void;
 }
 
 export function ProjectsTable({
@@ -31,6 +33,7 @@ export function ProjectsTable({
   onOpenTestSend,
   onOpenQuotaModal,
   onFilterProjectLogs,
+  onOpenAddProject,
 }: ProjectsTableProps) {
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
@@ -46,7 +49,7 @@ export function ProjectsTable({
 
   return (
     <div className="space-y-3.5">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
             Project Quota Slices
@@ -55,6 +58,17 @@ export function ProjectsTable({
             Per-project daily volume allocations, primary routing, and automatic failover metrics
           </p>
         </div>
+        {onOpenAddProject && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenAddProject}
+            className="min-h-[40px] gap-1.5 rounded-xl border-neutral-200/90 bg-white px-3 text-xs font-semibold text-neutral-800 shadow-2xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+          >
+            <Plus className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <span>New Project</span>
+          </Button>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-neutral-200/80 bg-white/90 shadow-xs dark:border-neutral-800/80 dark:bg-neutral-900/90 backdrop-blur-sm">
@@ -84,7 +98,18 @@ export function ProjectsTable({
               {projects.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-xs text-neutral-500 dark:text-neutral-400">
-                    No active projects registered in MailHub.
+                    <p className="font-medium text-neutral-700 dark:text-neutral-300">No active projects registered in MailHub.</p>
+                    {onOpenAddProject && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onOpenAddProject}
+                        className="mt-3 min-h-[38px] gap-1.5 rounded-xl text-xs font-semibold border-neutral-300 dark:border-neutral-700"
+                      >
+                        <Plus className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        <span>Create your first project</span>
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -149,9 +174,9 @@ export function ProjectsTable({
                         <div className="space-y-1.5">
                           <div className="flex items-baseline justify-between text-xs">
                             <span className="font-semibold text-neutral-900 tabular-nums dark:text-neutral-100">
-                              {project.sentToday}{" "}
+                              {project.sentToday.toLocaleString()}{" "}
                               <span className="font-normal text-neutral-500 dark:text-neutral-400">
-                                / {project.dailyQuotaSlice} daily slice
+                                / {project.dailyQuotaSlice.toLocaleString()} daily slice
                               </span>
                             </span>
 
@@ -162,12 +187,12 @@ export function ProjectsTable({
                             </span>
                           </div>
 
-                          {/* Progress Bar with Apple rounded glow */}
-                          <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-neutral-150 dark:bg-neutral-800">
+                          {/* Progress Bar with rounded track */}
+                          <div className="relative h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60">
                             <div
                               className={`h-full rounded-full transition-all duration-500 ease-out ${quota.barColor} ${quota.glow}`}
                               style={{
-                                width: `${Math.max(2, quota.percentage)}%`,
+                                width: `${quota.percentage > 0 ? Math.max(2, quota.percentage) : 0}%`,
                               }}
                             />
                           </div>
@@ -175,7 +200,7 @@ export function ProjectsTable({
                           <div className="flex justify-between text-[11px] text-neutral-500 dark:text-neutral-400 font-medium">
                             <span>
                               {project.dailyQuotaSlice - project.sentToday > 0
-                                ? `${project.dailyQuotaSlice - project.sentToday} sends remaining`
+                                ? `${(project.dailyQuotaSlice - project.sentToday).toLocaleString()} sends remaining`
                                 : "Slice exhausted"}
                             </span>
                             {quota.level === "danger" && (
@@ -194,8 +219,8 @@ export function ProjectsTable({
                             {getProviderDisplayName(project.primaryProvider)}
                           </span>
 
-                          <span className="text-neutral-400 dark:text-neutral-600">
-                            <ArrowRight className="h-3 w-3" />
+                          <span className="text-neutral-400 dark:text-neutral-500">
+                            <ArrowRight className="h-3 w-3 shrink-0" />
                           </span>
 
                           <div className="flex items-center gap-1">
@@ -228,9 +253,8 @@ export function ProjectsTable({
                             {project.failoverCount} rerouted
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 font-medium">
-                            <Check className="h-3.5 w-3.5 text-emerald-500" />
-                            0
+                          <span className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-0.5 text-[11px] font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                            0 failovers
                           </span>
                         )}
                       </td>

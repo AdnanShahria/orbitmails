@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getEnv } from "@/lib/cloudflare";
 import { getDb } from "@/db";
-import { mailboxes, users } from "@/db/schema";
+import { domains, mailboxes, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
 import { hasAdminAccount } from "@/lib/auth/setup";
 import { ACCOUNTS_COOKIE, rememberLogin } from "@/lib/auth/accounts";
@@ -21,6 +21,33 @@ import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { verifyTurnstileToken } from "@/lib/auth/turnstile";
 import { getDomainProvisioningError } from "@/lib/domains/errors";
 import { ensureBookingUsername } from "@/lib/booking/username";
+
+export async function GET() {
+	const env = getEnv();
+	const db = getDb(env);
+	const hasAdmin = await hasAdminAccount(env);
+
+	let activeDomains = await db
+		.select({ hostname: domains.hostname })
+		.from(domains)
+		.where(eq(domains.status, "active"))
+		.limit(10);
+
+	if (activeDomains.length === 0) {
+		const [firstDomain] = await db.select({ hostname: domains.hostname }).from(domains).limit(1);
+		if (firstDomain) activeDomains = [firstDomain];
+	}
+
+	const hostnames = activeDomains.map((d) => d.hostname);
+	if (hostnames.length === 0) {
+		hostnames.push(env.APP_URL ? new URL(env.APP_URL).hostname : "orbitmails.com");
+	}
+
+	return NextResponse.json({
+		hasAdmin,
+		domains: hostnames,
+	});
+}
 
 export async function POST(request: Request) {
 	const env = getEnv();
@@ -43,15 +70,54 @@ export async function POST(request: Request) {
 
 	// 1. If the platform is already initialized, allow public SaaS user registration
 	if (hasAdmin) {
-		const parsed = registerSchema.safeParse(body);
-		if (!parsed.success) {
-			return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+		let email = "";
+		let localPart = "";
+		let hostname = "";
+		const rawUsername = typeof bodyRecord.username === "string" ? bodyRecord.username.trim() : "";
+		const rawDomain = typeof bodyRecord.domain === "string" ? bodyRecord.domain.trim() : "";
+
+		if (rawUsername && rawDomain) {
+			localPart = rawUsername.toLowerCase().replace(/[^a-z0-9._-]/g, "");
+			hostname = rawDomain.toLowerCase();
+			email = `${localPart}@${hostname}`;
+		} else {
+			const parsed = registerSchema.safeParse(body);
+			if (!parsed.success) {
+				return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+			}
+			email = parsed.data.email.toLowerCase().trim();
+			const parts = email.split("@");
+			localPart = parts[0] ?? "";
+			hostname = parts[1] ?? "";
 		}
 
-		const email = parsed.data.email.toLowerCase().trim();
+		if (!email || !email.includes("@") || localPart.length === 0 || hostname.length < 3) {
+			return NextResponse.json({ error: "Please enter a valid email address or username" }, { status: 400 });
+		}
+
+		const password = typeof bodyRecord.password === "string" ? bodyRecord.password : "";
+		if (password.length < 8) {
+			return NextResponse.json({ error: "Password must be at least 8 characters long" }, { status: 400 });
+		}
+
+		const name = (typeof bodyRecord.name === "string" && bodyRecord.name.trim()) || localPart;
+
 		const [existing] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 		if (existing) {
-			return NextResponse.json({ error: "Email already registered" }, { status: 409 });
+			return NextResponse.json({ error: "This email address is already registered. Please choose another username or sign in." }, { status: 409 });
+		}
+
+		// Check if domain exists on platform and if localPart is already taken
+		const [domainRecord] = await db.select().from(domains).where(eq(domains.hostname, hostname)).limit(1);
+		if (domainRecord) {
+			const [existingMailbox] = await db
+				.select({ id: mailboxes.id })
+				.from(mailboxes)
+				.where(and(eq(mailboxes.domainId, domainRecord.id), eq(mailboxes.localPart, localPart)))
+				.limit(1);
+			if (existingMailbox) {
+				return NextResponse.json({ error: "This mailbox handle is already taken. Please choose another username." }, { status: 409 });
+			}
 		}
 
 		const userId = newId("usr");
@@ -59,13 +125,36 @@ export async function POST(request: Request) {
 			id: userId,
 			remoteContentMode: "ask",
 			email,
-			passwordHash: hashPassword(parsed.data.password),
-			name: parsed.data.name.trim(),
+			passwordHash: hashPassword(password),
+			name,
 			role: "admin",
 			isPrimaryAdmin: false,
 			canManageDomains: true,
 			canManageMailboxes: true,
 		});
+
+		// Auto-provision personal mailbox if domain is registered on the platform
+		if (domainRecord && localPart) {
+			const mailboxId = newId("mbx");
+			try {
+				await db.insert(mailboxes).values({
+					id: mailboxId,
+					userId,
+					domainId: domainRecord.id,
+					localPart,
+					displayName: name,
+					type: "personal",
+				});
+				await ensureMailboxDomainRouting(env, db, {
+					id: mailboxId,
+					domainId: domainRecord.id,
+					localPart,
+					useAllDomains: false,
+				});
+			} catch {
+				// Best-effort mailbox creation
+			}
+		}
 
 		const token = await createSession(env, userId);
 		await recordAuthActivity(env, { action: "auth.login", userId, request });

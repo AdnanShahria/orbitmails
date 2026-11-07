@@ -13,6 +13,7 @@ import {
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth/client";
+import { AddProjectModal } from "@/components/mailhub/add-project-modal";
 import { ActivityFeed } from "./activity-feed";
 import { MailHubNavTabs } from "./mailhub-nav-tabs";
 import { ProjectsTable } from "./projects-table";
@@ -33,20 +34,28 @@ import {
   normalizeProviderId,
 } from "./utils";
 
-// Fallback project visual palette
-const PROJECT_VISUAL_MAP: Record<string, { brandColor: string; avatarInitials: string }> = {
-  proj_aurelia: { brandColor: "bg-indigo-600", avatarInitials: "AU" },
-  proj_lifesolver: { brandColor: "bg-emerald-600", avatarInitials: "LS" },
-  proj_luvio: { brandColor: "bg-rose-600", avatarInitials: "LU" },
-  proj_ovijatric: { brandColor: "bg-amber-600", avatarInitials: "OV" },
-};
-
-const DEFAULT_PROJECT_VISUALS = [
-  { brandColor: "bg-cyan-600", avatarInitials: "OM" },
-  { brandColor: "bg-violet-600", avatarInitials: "VX" },
-  { brandColor: "bg-fuchsia-600", avatarInitials: "FX" },
-  { brandColor: "bg-teal-600", avatarInitials: "TL" },
-];
+// Dynamic project visual palette generator based on project name
+function getProjectVisual(name: string, idx: number) {
+  const words = name.trim().split(/\s+/);
+  const initials =
+    words.length >= 2
+      ? (words[0][0] + words[1][0]).toUpperCase()
+      : name.slice(0, 2).toUpperCase();
+  const colors = [
+    "bg-indigo-600",
+    "bg-emerald-600",
+    "bg-rose-600",
+    "bg-amber-600",
+    "bg-cyan-600",
+    "bg-violet-600",
+    "bg-fuchsia-600",
+    "bg-teal-600",
+  ];
+  return {
+    brandColor: colors[idx % colors.length],
+    avatarInitials: initials || "OM",
+  };
+}
 
 export default function MailHubDashboardPage() {
   const queryClient = useQueryClient();
@@ -55,10 +64,11 @@ export default function MailHubDashboardPage() {
   const [activeProjectForTest, setActiveProjectForTest] = useState<MailHubProject | null>(null);
   const [isTestSendOpen, setIsTestSendOpen] = useState(false);
   const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
+  const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectFilterForLogs, setProjectFilterForLogs] = useState<string | null>(null);
-  const [isStreaming, setIsStreaming] = useState(true);
+  const [isStreaming, setIsStreaming] = useState(false);
 
-  // 1. Fetch Real-Time Today Stats from Live API
+  // 1. Fetch Real-Time Today Stats from Live API (rate-optimized to protect Cloudflare quotas)
   const {
     data: statsResponse,
     isLoading: isStatsLoading,
@@ -83,10 +93,12 @@ export default function MailHubDashboardPage() {
         providers: any[];
       }>;
     },
-    refetchInterval: isStreaming ? 5000 : false,
+    refetchInterval: isStreaming ? 30000 : false,
+    refetchIntervalInBackground: false,
+    staleTime: 15000,
   });
 
-  // 2. Fetch Live Project Allocations and Routing Waterfall Configurations
+  // 2. Fetch Live Project Allocations (fetched on demand / mutation, no aggressive polling)
   const {
     data: allocationsResponse,
     isLoading: isAllocationsLoading,
@@ -129,10 +141,12 @@ export default function MailHubDashboardPage() {
         };
       }>;
     },
-    refetchInterval: isStreaming ? 5000 : false,
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+    staleTime: 60000,
   });
 
-  // 3. Fetch Live Activity Stream from Ingestion / Send Logs
+  // 3. Fetch Live Activity Stream from Ingestion / Send Logs (poll only when stream is active)
   const {
     data: activitiesResponse,
     isLoading: isActivitiesLoading,
@@ -154,7 +168,9 @@ export default function MailHubDashboardPage() {
         activities: MailHubActivityItem[];
       }>;
     },
-    refetchInterval: isStreaming ? 5000 : false,
+    refetchInterval: isStreaming ? 30000 : false,
+    refetchIntervalInBackground: false,
+    staleTime: 15000,
   });
 
   // Global manual refresh handler
@@ -181,14 +197,14 @@ export default function MailHubDashboardPage() {
 
     return {
       totalSentToday: totalSent,
-      sentDeltaPercent: 14,
-      activeProjectsCount: raw?.activeProjects ?? allocationsResponse?.projects?.length ?? 4,
-      totalProjectsCount: allocationsResponse?.projects?.length ?? 4,
-      healthyProvidersCount: healthyCount || statsResponse?.providers?.length || 5,
-      totalProvidersCount: statsResponse?.providers?.length || 5,
+      sentDeltaPercent: 0,
+      activeProjectsCount: raw?.activeProjects ?? allocationsResponse?.projects?.length ?? 0,
+      totalProjectsCount: allocationsResponse?.projects?.length ?? 0,
+      healthyProvidersCount: healthyCount || (statsResponse?.providers?.length ?? 0),
+      totalProvidersCount: statsResponse?.providers?.length ?? 0,
       failoversTriggeredToday: raw?.failoversTriggeredToday ?? 0,
       overallDeliveryRate: deliveryRate,
-      avgLatencyMs: raw?.averageLatencyMs || 158,
+      avgLatencyMs: raw?.averageLatencyMs ?? 0,
     };
   }, [statsResponse, allocationsResponse]);
 
@@ -198,22 +214,22 @@ export default function MailHubDashboardPage() {
       return statsResponse.providers.map((p: any) => {
         const id = normalizeProviderId(p.provider || p.id);
         const brand = getProviderBrand(id);
+        const displayName = getProviderDisplayName(id);
 
         return {
           id,
-          name: p.name || p.label || getProviderDisplayName(id),
+          name: displayName,
           tier:
-            p.tier ||
-            (p.dailyLimit > 0
+            p.dailyLimit > 0
               ? `${p.dailyLimit.toLocaleString()}/day pool`
-              : "Direct worker routing"),
+              : "Direct routing",
           dailyLimit: p.dailyLimit || 0,
           usedToday: p.usedToday || 0,
           health: p.health || "active",
           consecutiveFailures: p.consecutiveFailures || 0,
           maxStrikes: p.maxStrikes || 3,
           lastIncident: p.lastIncident || null,
-          avgLatencyMs: p.avgLatencyMs || 160,
+          avgLatencyMs: p.avgLatencyMs || 0,
           deliveryRatePercent: p.deliveryRatePercent || 100,
           brandBg: brand.bg,
           brandFg: brand.fg,
@@ -222,20 +238,20 @@ export default function MailHubDashboardPage() {
     }
 
     // Default Provider Layout while query loads
-    const defaultIds: ProviderId[] = ["brevo", "resend", "ses", "zepto", "cloudflare"];
+    const defaultIds: ProviderId[] = ["brevo", "resend", "ses", "zepto"];
     return defaultIds.map((id) => {
       const brand = getProviderBrand(id);
       return {
         id,
         name: getProviderDisplayName(id),
-        tier: id === "brevo" ? "300/day pool" : "Direct routing",
-        dailyLimit: id === "brevo" ? 300 : 0,
+        tier: "Direct routing",
+        dailyLimit: 0,
         usedToday: 0,
         health: "active",
         consecutiveFailures: 0,
         maxStrikes: 3,
         lastIncident: null,
-        avgLatencyMs: 160,
+        avgLatencyMs: 0,
         deliveryRatePercent: 100,
         brandBg: brand.bg,
         brandFg: brand.fg,
@@ -247,9 +263,7 @@ export default function MailHubDashboardPage() {
   const projects: MailHubProject[] = useMemo(() => {
     if (allocationsResponse?.projects && allocationsResponse.projects.length > 0) {
       return allocationsResponse.projects.map((proj, idx) => {
-        const visual =
-          PROJECT_VISUAL_MAP[proj.id] ||
-          DEFAULT_PROJECT_VISUALS[idx % DEFAULT_PROJECT_VISUALS.length];
+        const visual = getProjectVisual(proj.name, idx);
 
         const matchedKey = allocationsResponse.keys?.find((k) => k.projectId === proj.id);
         const projAllocations = (allocationsResponse.allocations || []).filter(
@@ -311,19 +325,64 @@ export default function MailHubDashboardPage() {
     queryClient.invalidateQueries({ queryKey: ["mailhub-stats"] });
   };
 
-  return (
-    <div className="space-y-8 pb-14">
-      {/* 1. Modern Apple HIG Segmented Navigation Tabs */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <MailHubNavTabs />
+  const handleAddProject = async (data: {
+    name: string;
+    slug?: string;
+    description?: string;
+  }): Promise<{ project: any; key: string }> => {
+    const res = await authFetch("/api/admin/mailhub/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "create", ...data }),
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as Record<string, any>;
+      throw new Error(err.error || "Failed to create project");
+    }
+    return res.json() as Promise<{ project: any; key: string }>;
+  };
 
-        {/* Global Quick Action Buttons with accessible >=44px touch targets */}
-        <div className="flex items-center gap-2.5">
+  const handleProjectCreated = () => {
+    queryClient.invalidateQueries({ queryKey: ["mailhub-allocations"] });
+    queryClient.invalidateQueries({ queryKey: ["mailhub-stats"] });
+    setIsAddProjectOpen(false);
+  };
+
+  return (
+    <div className="space-y-6 pb-14">
+      {/* 1. Page Header & Primary Actions */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pt-1">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-900 md:text-3xl dark:text-neutral-50">
+              MailHub Routing Engine
+            </h1>
+            <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900/50">
+              v1.0 Live
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+            Unified multi-provider email infrastructure, quota slicing, and intelligent failover across all projects.
+          </p>
+        </div>
+
+        {/* Global Quick Action Buttons */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsAddProjectOpen(true)}
+            className="min-h-[40px] gap-2 rounded-xl border-neutral-200/90 bg-white px-3.5 text-xs font-semibold text-neutral-800 shadow-2xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 transition-colors"
+          >
+            <Plus className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <span>New Project</span>
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
             onClick={() => setIsQuotaModalOpen(true)}
-            className="min-h-[44px] gap-2 rounded-xl border-neutral-200/90 bg-white px-3.5 text-xs font-semibold text-neutral-800 shadow-2xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 transition-colors"
+            className="min-h-[40px] gap-2 rounded-xl border-neutral-200/90 bg-white px-3.5 text-xs font-semibold text-neutral-800 shadow-2xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 transition-colors"
           >
             <Settings2 className="h-4 w-4 text-neutral-500" />
             <span>Rebalance Slices</span>
@@ -336,7 +395,7 @@ export default function MailHubDashboardPage() {
               setActiveProjectForTest(projects[0] || null);
               setIsTestSendOpen(true);
             }}
-            className="min-h-[44px] gap-2 rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition-colors"
+            className="min-h-[40px] gap-2 rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 transition-colors"
           >
             <Send className="h-4 w-4" />
             <span>Trigger Test Email</span>
@@ -344,20 +403,8 @@ export default function MailHubDashboardPage() {
         </div>
       </div>
 
-      {/* 2. Hero Title & Subtitle */}
-      <div>
-        <div className="flex items-center gap-2.5">
-          <h1 className="text-2xl font-bold tracking-tight text-neutral-900 md:text-3xl dark:text-neutral-50">
-            MailHub Routing Engine
-          </h1>
-          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900/50">
-            v1.0 Live
-          </span>
-        </div>
-        <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
-          Unified multi-provider email infrastructure, quota slicing, and intelligent failover across all projects.
-        </p>
-      </div>
+      {/* 2. Apple HIG Segmented Navigation Tabs */}
+      <MailHubNavTabs />
 
       {/* 3. Summary Statistics Cards */}
       <StatsCards stats={stats} />
@@ -377,11 +424,13 @@ export default function MailHubDashboardPage() {
         }}
         onOpenQuotaModal={() => setIsQuotaModalOpen(true)}
         onFilterProjectLogs={(projectId) => setProjectFilterForLogs(projectId)}
+        onOpenAddProject={() => setIsAddProjectOpen(true)}
       />
 
       {/* 6. Live Activity Stream & Diagnostic Waterfall */}
       <ActivityFeed
         activities={activities}
+        projects={projects}
         selectedProjectFilter={projectFilterForLogs}
         onSelectProjectFilter={setProjectFilterForLogs}
         onRefresh={handleGlobalRefresh}
@@ -402,6 +451,13 @@ export default function MailHubDashboardPage() {
         onClose={() => setIsQuotaModalOpen(false)}
         projects={projects}
         onSaveSlices={handleSaveSlices}
+      />
+
+      <AddProjectModal
+        isOpen={isAddProjectOpen}
+        onClose={() => setIsAddProjectOpen(false)}
+        onAddProject={handleAddProject}
+        onProjectCreated={handleProjectCreated}
       />
     </div>
   );

@@ -36,16 +36,22 @@ export function StatsCards({ stats }: StatsCardsProps) {
           <span className="text-3xl font-bold tracking-tight text-neutral-900 tabular-nums dark:text-neutral-50">
             {stats.totalSentToday.toLocaleString()}
           </span>
-          <span className="inline-flex items-center gap-0.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-            <ArrowUp className="h-3 w-3" />
-            +{stats.sentDeltaPercent}%
-          </span>
+          {stats.sentDeltaPercent > 0 ? (
+            <span className="inline-flex items-center gap-0.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <ArrowUp className="h-3 w-3" />
+              +{stats.sentDeltaPercent}%
+            </span>
+          ) : (
+            <span className="text-xs text-neutral-400 dark:text-neutral-500 font-medium">
+              emails today
+            </span>
+          )}
         </div>
 
         <div className="mt-3.5 flex items-center justify-between border-t border-neutral-100 pt-3 text-xs text-neutral-600 dark:border-neutral-800 dark:text-neutral-300 font-medium">
-          <span>Avg latency: {stats.avgLatencyMs}ms</span>
+          <span>Avg latency: {stats.avgLatencyMs > 0 ? `${stats.avgLatencyMs}ms` : "--"}</span>
           <span className="font-semibold text-neutral-800 dark:text-neutral-200">
-            {stats.overallDeliveryRate}% delivered
+            {stats.totalSentToday > 0 ? `${stats.overallDeliveryRate}% delivered` : "Ready"}
           </span>
         </div>
       </div>

@@ -70,7 +70,7 @@ export async function GET(request: Request) {
 					consecutiveFailures: cbRecord.consecutiveFailures,
 					maxStrikes: 3,
 					lastIncident: cbRecord.lastErrorMessage || (cbRecord.state === "open" ? "Circuit open (quarantined)" : null),
-					avgLatencyMs: realtimeSummary.avgLatencyMsToday || 180,
+					avgLatencyMs: realtimeSummary.avgLatencyMsToday || 0,
 					deliveryRatePercent: realtimeSummary.successRateToday || 100,
 					circuitStatus:
 						cbRecord.state === "open"

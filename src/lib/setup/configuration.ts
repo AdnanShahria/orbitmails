@@ -5,6 +5,8 @@ import type { SetupRequirementCheck } from "./types";
 export function getSetupRequirementChecks(env: CloudflareEnv): SetupRequirementCheck[] {
 	const hasApiToken = !!env.CF_TOKEN?.trim();
 	const hasGlobalKey = !!env.CF_API_KEY?.trim() && !!env.CF_EMAIL?.trim();
+	const hasCredentials = hasApiToken || hasGlobalKey;
+	const isDev = process.env.NODE_ENV !== "production";
 
 	const database = getDatabaseConfig(env);
 	if (isNodeRuntime(env)) {
@@ -32,9 +34,13 @@ export function getSetupRequirementChecks(env: CloudflareEnv): SetupRequirementC
 
 	return [
 		{
-			key: "Cloudflare API credentials",
-			configured: hasApiToken || hasGlobalKey,
-			message: "Set CF_TOKEN, or set both CF_API_KEY and CF_EMAIL.",
+			key: hasCredentials ? "Cloudflare API credentials" : "Cloudflare API credentials (optional)",
+			configured: hasCredentials || isDev,
+			message: hasCredentials
+				? "Cloudflare API credentials are configured."
+				: isDev
+					? "Optional for local development and manual DNS. Set CF_TOKEN in .dev.vars if you want automatic DNS provisioning."
+					: "Set CF_TOKEN, or set both CF_API_KEY and CF_EMAIL.",
 		},
 		{
 			key: database.driver === "d1" ? "D1 database" : "Database",

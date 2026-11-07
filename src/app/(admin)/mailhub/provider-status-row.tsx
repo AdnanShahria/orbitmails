@@ -131,7 +131,7 @@ export function ProviderStatusRow({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {providers.map((p) => {
           const quota = getQuotaProgressColor(p.usedToday, p.dailyLimit);
           const healthMeta = getProviderHealthMeta(p.health);
@@ -146,14 +146,14 @@ export function ProviderStatusRow({
             >
               {/* Header: Provider badge & Health pill */}
               <div>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
                     <span
-                      className={`flex h-8 w-8 items-center justify-center rounded-xl text-xs font-bold ${p.brandBg} ${p.brandFg} shadow-xs`}
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${p.brandBg} ${p.brandFg} shadow-xs`}
                     >
                       {p.name.charAt(0)}
                     </span>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <h3 className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
                         {p.name}
                       </h3>
@@ -165,7 +165,7 @@ export function ProviderStatusRow({
 
                   {/* Health status pill */}
                   <span
-                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-tight ${healthMeta.badgeClass}`}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-tight ${healthMeta.badgeClass}`}
                   >
                     <span
                       className={`inline-block h-1.5 w-1.5 rounded-full ${healthMeta.dotColor} ${
@@ -203,10 +203,12 @@ export function ProviderStatusRow({
                   </div>
 
                   {p.dailyLimit > 0 ? (
-                    <div className="relative h-2 w-full overflow-hidden rounded-full bg-neutral-150 dark:bg-neutral-800">
+                    <div className="relative h-2 w-full overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60">
                       <div
                         className={`h-full rounded-full transition-all duration-500 ease-out ${quota.barColor} ${quota.glow}`}
-                        style={{ width: `${Math.max(2, quota.percentage)}%` }}
+                        style={{
+                          width: `${quota.percentage > 0 ? Math.max(2, quota.percentage) : 0}%`,
+                        }}
                       />
                     </div>
                   ) : (
@@ -268,8 +270,10 @@ export function ProviderStatusRow({
                     >
                       {pingResult.text}
                     </span>
-                  ) : (
+                  ) : p.avgLatencyMs > 0 ? (
                     `Avg: ${p.avgLatencyMs}ms`
+                  ) : (
+                    "Latency: --"
                   )}
                 </span>
 

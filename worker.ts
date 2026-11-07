@@ -188,26 +188,37 @@ export default {
 
 	async scheduled(controller: ScheduledController, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
 		const env = withDatabase(withStorage(rawEnv));
-		if (controller.cron === "0 2 * * *") ctx.waitUntil(runScheduledDatabaseBackup(env, new Date(controller.scheduledTime)));
+		const scheduledDate = new Date(controller.scheduledTime);
+		const currentHour = scheduledDate.getUTCHours();
+		const currentMinute = scheduledDate.getUTCMinutes();
+
+		const isDaily2AM = controller.cron === "0 2 * * *" || (currentHour === 2 && currentMinute < 5);
+		const isDaily8AM = controller.cron === "0 8 * * *" || (currentHour === 8 && currentMinute < 5);
+		const isTenMinute = controller.cron === "*/10 * * * *" || currentMinute % 10 === 0;
+
+		// Daily 02:00 AM UTC backup, sweeps, and deep retention
+		if (isDaily2AM) {
+			ctx.waitUntil(runScheduledDatabaseBackup(env, scheduledDate));
+			ctx.waitUntil(runAccountRetention(env, scheduledDate));
+			ctx.waitUntil(runDriveTrashRetention(env, scheduledDate));
+			ctx.waitUntil(runJmapChangeRetention(env, scheduledDate));
+			ctx.waitUntil(sweepOrphanedRawMail(env, scheduledDate).catch((error) => console.error("Raw mail sweep failed", error)));
+		}
+
+		// 5-Minute upkeep jobs
 		ctx.waitUntil(runAgentMaintenance(env));
-		ctx.waitUntil(runTrashRetention(env, new Date(controller.scheduledTime)));
-		ctx.waitUntil(runFollowUpReminders(env, new Date(controller.scheduledTime)));
-		ctx.waitUntil(runCalendarReminders(env, new Date(controller.scheduledTime)));
-		ctx.waitUntil(sweepImportJobs(env, new Date(controller.scheduledTime)));
-		if (controller.cron === "0 2 * * *") ctx.waitUntil(runAccountRetention(env, new Date(controller.scheduledTime)));
-		// Drive trash is emptied once a day, with the 02:00 UTC cron; the 5-minute cron is for queue-like upkeep.
-		if (controller.cron === "0 2 * * *") ctx.waitUntil(runDriveTrashRetention(env, new Date(controller.scheduledTime)));
-		if (controller.cron === "0 2 * * *") ctx.waitUntil(runJmapChangeRetention(env, new Date(controller.scheduledTime)));
-		if (controller.cron === "0 2 * * *") ctx.waitUntil(sweepOrphanedRawMail(env, new Date(controller.scheduledTime)).catch((error) => console.error("Raw mail sweep failed", error)));
+		ctx.waitUntil(runTrashRetention(env, scheduledDate));
+		ctx.waitUntil(runFollowUpReminders(env, scheduledDate));
+		ctx.waitUntil(runCalendarReminders(env, scheduledDate));
+		ctx.waitUntil(sweepImportJobs(env, scheduledDate));
 
 		// MailHub Health Monitoring: 10-minute checks for quota breaches, tripped circuit breakers, and DLQ
-		const scheduledDate = new Date(controller.scheduledTime);
-		if (controller.cron === "*/10 * * * *" || scheduledDate.getUTCMinutes() % 10 === 0) {
+		if (isTenMinute) {
 			ctx.waitUntil(runHealthMonitoringJob(env, scheduledDate).catch((error) => console.error("MailHub health monitoring failed", error)));
 		}
 
 		// MailHub Daily Developer Digest: 08:00 AM UTC summary
-		if (controller.cron === "0 8 * * *" || (scheduledDate.getUTCHours() === 8 && scheduledDate.getUTCMinutes() === 0)) {
+		if (isDaily8AM) {
 			ctx.waitUntil(runDailyDigestJob(env, scheduledDate).catch((error) => console.error("MailHub daily digest failed", error)));
 		}
 	},

@@ -4,10 +4,13 @@ import React, { useState } from "react";
 import {
 	Bot,
 	Check,
+	Cloud,
 	Copy,
 	FileCode,
+	Globe2,
 	KeyRound,
 	Plus,
+	Server,
 	ShieldAlert,
 	Sparkles,
 	Trash2,
@@ -62,14 +65,16 @@ export function RoutingKeyModal({
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
 	const [viewingGuideKey, setViewingGuideKey] = useState<string | null>(null);
-	const [activeTab, setActiveTab] = useState<"ai_prompt" | "resend_code" | "env_file" | "cf_secrets" | "curl">("ai_prompt");
+	const [activeTab, setActiveTab] = useState<"native_code" | "deploy" | "env_file" | "ai_prompt" | "resend_code">("native_code");
+	const [codeLang, setCodeLang] = useState<"typescript" | "python" | "curl">("typescript");
+	const [deployTarget, setDeployTarget] = useState<"vercel" | "cloudflare" | "docker" | "github">("vercel");
 	
 	const [copiedKey, setCopiedKey] = useState(false);
-	const [copiedSnippet, setCopiedSnippet] = useState(false);
+	const [copiedCode, setCopiedCode] = useState(false);
+	const [copiedDeploy, setCopiedDeploy] = useState(false);
 	const [copiedPrompt, setCopiedPrompt] = useState(false);
 	const [copiedEnv, setCopiedEnv] = useState(false);
-	const [copiedGithub, setCopiedGithub] = useState(false);
-	const [copiedCurl, setCopiedCurl] = useState(false);
+	const [copiedResend, setCopiedResend] = useState(false);
 
 	const projectKeys = keys.filter((k) => k.projectId === projectId);
 
@@ -77,7 +82,7 @@ export function RoutingKeyModal({
 		? `https://${window.location.host}`
 		: "https://mail.orbitsaas.cloud";
 
-	const copyToClipboard = async (text: string, type: "key" | "prompt" | "snippet" | "env" | "github" | "curl") => {
+	const copyToClipboard = async (text: string, type: "key" | "prompt" | "code" | "deploy" | "env" | "resend") => {
 		try {
 			await navigator.clipboard.writeText(text);
 			if (type === "key") {
@@ -86,18 +91,18 @@ export function RoutingKeyModal({
 			} else if (type === "prompt") {
 				setCopiedPrompt(true);
 				setTimeout(() => setCopiedPrompt(false), 2000);
-			} else if (type === "snippet") {
-				setCopiedSnippet(true);
-				setTimeout(() => setCopiedSnippet(false), 2000);
+			} else if (type === "code") {
+				setCopiedCode(true);
+				setTimeout(() => setCopiedCode(false), 2000);
+			} else if (type === "deploy") {
+				setCopiedDeploy(true);
+				setTimeout(() => setCopiedDeploy(false), 2000);
 			} else if (type === "env") {
 				setCopiedEnv(true);
 				setTimeout(() => setCopiedEnv(false), 2000);
-			} else if (type === "github") {
-				setCopiedGithub(true);
-				setTimeout(() => setCopiedGithub(false), 2000);
-			} else if (type === "curl") {
-				setCopiedCurl(true);
-				setTimeout(() => setCopiedCurl(false), 2000);
+			} else if (type === "resend") {
+				setCopiedResend(true);
+				setTimeout(() => setCopiedResend(false), 2000);
 			}
 		} catch (err) {
 			console.error("Failed to copy:", err);
@@ -112,7 +117,7 @@ export function RoutingKeyModal({
 			setNewlyCreatedKey(result.fullKey);
 			setViewingGuideKey(null);
 			setKeyName("");
-			setActiveTab("ai_prompt");
+			setActiveTab("native_code");
 		} catch (err) {
 			console.error("Failed to generate routing key:", err);
 		} finally {
@@ -120,135 +125,136 @@ export function RoutingKeyModal({
 		}
 	};
 
-	const activeKeyForGuide = newlyCreatedKey || viewingGuideKey || `orb_live_${projectSlug}_...`;
+	const activeKeyForGuide = newlyCreatedKey || viewingGuideKey || `om_live_${projectSlug}_...`;
 
-	const aiAgentPrompt = (key: string) => `### TASK: Connect Email Delivery to OrbitMails (MailHub)
-We are using OrbitMails (hosted at ${hostUrl}) as our centralized email routing and failover infrastructure.
+	const nativeTsSnippet = (key: string) => `// OrbitMail Native Client (Next.js App Router / Node.js / Edge)
+// Works in Server Actions, Route Handlers, and Background Workers
+export async function sendEmail({
+  to,
+  subject,
+  html,
+}: {
+  to: string | string[];
+  subject: string;
+  html: string;
+}) {
+  const res = await fetch(process.env.ORBITMAIL_URL || "${hostUrl}/api/v1/send", {
+    method: "POST",
+    headers: {
+      "Authorization": \`Bearer \${process.env.ORBITMAIL_API_KEY}\`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: process.env.ORBITMAIL_FROM || "notifications@${projectSlug}.com",
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+    }),
+  });
 
-Please configure email delivery in this codebase with the following instructions:
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(\`OrbitMail delivery failed (\${res.status}): \${errorText}\`);
+  }
 
-1. Environment Variables:
-   Add these to \`.env\` and \`.env.local\` (or your secrets manager):
-   MAILHUB_URL="${hostUrl}/v1"
-   MAILHUB_API_KEY="${key}"
-   MAIL_FROM="notifications@${projectSlug}.com"
+  return await res.json(); // { id: "msg_...", status: "accepted" }
+}`;
 
-2. Integration Strategy (Choose whichever fits our architecture):
+	const pythonSnippet = (key: string) => `import os
+import requests
 
-   Option A ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Drop-in Resend SDK (Recommended if @resend/node or resend is installed):
-   \`\`\`typescript
-   import { Resend } from "resend";
+# OrbitMail Native Python Client (FastAPI / Django / Flask / Background scripts)
+def send_email(to, subject, html):
+    url = os.getenv("ORBITMAIL_URL", "${hostUrl}/api/v1/send")
+    api_key = os.environ["ORBITMAIL_API_KEY"]
+    from_addr = os.getenv("ORBITMAIL_FROM", "notifications@${projectSlug}.com")
 
-   export const resend = new Resend(process.env.MAILHUB_API_KEY, {
-     baseUrl: process.env.MAILHUB_URL || "${hostUrl}/v1",
-   });
+    response = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": from_addr,
+            "to": [to] if isinstance(to, str) else to,
+            "subject": subject,
+            "html": html,
+        },
+    )
+    response.raise_for_status()
+    return response.json()`;
 
-   // Send email helper
-   export async function sendEmail({
-     to,
-     subject,
-     html,
-   }: {
-     to: string | string[];
-     subject: string;
-     html: string;
-   }) {
-     return await resend.emails.send({
-       from: process.env.MAIL_FROM || "notifications@${projectSlug}.com",
-       to,
-       subject,
-       html,
-     });
-   }
-   \`\`\`
-
-   Option B ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Zero-Dependency Native Fetch:
-   \`\`\`typescript
-   export async function sendEmail({
-     to,
-     subject,
-     html,
-   }: {
-     to: string | string[];
-     subject: string;
-     html: string;
-   }) {
-     const res = await fetch(\`\${process.env.MAILHUB_URL || "${hostUrl}/v1"}/send\`, {
-       method: "POST",
-       headers: {
-         "Content-Type": "application/json",
-         Authorization: \`Bearer \${process.env.MAILHUB_API_KEY}\`,
-       },
-       body: JSON.stringify({
-         from: process.env.MAIL_FROM || "notifications@${projectSlug}.com",
-         to: Array.isArray(to) ? to : [to],
-         subject,
-         html,
-       }),
-     });
-
-     if (!res.ok) {
-       const err = await res.text();
-       throw new Error(\`OrbitMails send failed (\${res.status}): \${err}\`);
-     }
-
-     return await res.json(); // { id: "msg_...", status: "accepted" }
-   }
-   \`\`\`
-
-3. Verification:
-   Create a small verification script or test to send one email to verify delivery. Expect HTTP 200/202 with a valid message \`id\`.`;
-
-	const envSnippet = (key: string) => `MAILHUB_URL="${hostUrl}/v1"
-MAILHUB_API_KEY="${key}"
-MAIL_FROM="notifications@${projectSlug}.com"`;
-
-	const resendSnippet = (key: string) => `import { Resend } from "resend";
-
-// Drop-in compatible with Resend SDK!
-const resend = new Resend(process.env.MAILHUB_API_KEY, {
-  baseUrl: process.env.MAILHUB_URL || "${hostUrl}/v1",
-});
-
-await resend.emails.send({
-  from: process.env.MAIL_FROM || "notifications@${projectSlug}.com",
-  to: "user@example.com",
-  subject: "Welcome to ${projectName}!",
-  html: "<p>Your email delivered through OrbitMails.</p>",
-});`;
-
-	const curlSnippet = (key: string) => `curl -X POST "${hostUrl}/v1/send" \\
+	const curlSnippet = (key: string) => `curl -X POST "${hostUrl}/api/v1/send" \\
   -H "Authorization: Bearer ${key}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "from": "notifications@${projectSlug}.com",
     "to": ["user@example.com"],
-    "subject": "Testing OrbitMails Routing",
-    "html": "<p>Hello from OrbitMails MailHub!</p>"
+    "subject": "Testing OrbitMail API",
+    "html": "<p>Hello from OrbitMail!</p>"
   }'`;
 
-	const githubSnippet = (key: string) => `# ============================================================
-# OPTION A: Cloudflare Secrets (Recommended for CF Workers / Pages)
-# ============================================================
-# Run these once in your terminal (no GitHub needed):
-#   npx wrangler secret put ORBITMAIL_ROUTING_KEY
-#   # When prompted, paste: ${key}
-#   npx wrangler secret put ORBITMAIL_BASE_URL
-#   # When prompted, paste: ${hostUrl}/v1
-#
-# Or via Cloudflare Dashboard:
-#   Workers & Pages â†’ Your Project â†’ Settings â†’ Variables & Secrets
-#   Add: ORBITMAIL_ROUTING_KEY = ${key}
-#   Add: ORBITMAIL_BASE_URL    = ${hostUrl}/v1
+	const envSnippet = (key: string) => `ORBITMAIL_API_KEY="${key}"
+ORBITMAIL_URL="${hostUrl}/api/v1/send"
+ORBITMAIL_FROM="notifications@${projectSlug}.com"`;
 
-# ============================================================
-# OPTION B: GitHub Repository Secrets (for CI/CD pipelines)
-# ============================================================
-# In your repo: Settings â†’ Secrets and variables â†’ Actions
-# Add secret: ORBITMAIL_ROUTING_KEY = ${key}
-# Add secret: ORBITMAIL_BASE_URL    = ${hostUrl}/v1
+	const vercelSnippet = (key: string) => `# Option 1: Vercel CLI (Run in your terminal)
+vercel env add ORBITMAIL_API_KEY production
+# When prompted, paste: ${key}
 
-# GitHub Actions workflow (.github/workflows/deploy.yml):
+vercel env add ORBITMAIL_URL production
+# When prompted, paste: ${hostUrl}/api/v1/send
+
+vercel env add ORBITMAIL_FROM production
+# When prompted, paste: notifications@${projectSlug}.com
+
+# Option 2: Vercel Web Dashboard
+# Go to: Project -> Settings -> Environment Variables
+# Add: ORBITMAIL_API_KEY  = ${key}
+# Add: ORBITMAIL_URL      = ${hostUrl}/api/v1/send
+# Add: ORBITMAIL_FROM     = notifications@${projectSlug}.com
+
+# Compatible with Vercel Serverless Functions, Server Components, Server Actions & Edge Middleware!`;
+
+	const cfSnippet = (key: string) => `# Option 1: Wrangler CLI (Cloudflare Workers & Pages)
+npx wrangler secret put ORBITMAIL_API_KEY
+# When prompted, paste: ${key}
+
+npx wrangler secret put ORBITMAIL_URL
+# When prompted, paste: ${hostUrl}/api/v1/send
+
+# Option 2: Cloudflare Dashboard
+# Workers & Pages -> Your Project -> Settings -> Variables and Secrets
+# Add Secret: ORBITMAIL_API_KEY = ${key}
+# Add Variable: ORBITMAIL_URL = ${hostUrl}/api/v1/send
+# Add Variable: ORBITMAIL_FROM = notifications@${projectSlug}.com
+
+# In Worker code:
+# await fetch(env.ORBITMAIL_URL, {
+#   headers: { "Authorization": \`Bearer \${env.ORBITMAIL_API_KEY}\` },
+#   ...
+# });`;
+
+	const dockerSnippet = (key: string) => `# Option 1: docker-compose.yml (VPS / AWS EC2 / DigitalOcean / Railway / Render / Fly.io)
+services:
+  app:
+    build: .
+    environment:
+      - ORBITMAIL_API_KEY=${key}
+      - ORBITMAIL_URL=${hostUrl}/api/v1/send
+      - ORBITMAIL_FROM=notifications@${projectSlug}.com
+
+# Option 2: Linux VPS / systemd / PM2 (/etc/environment or ecosystem.config.js)
+export ORBITMAIL_API_KEY="${key}"
+export ORBITMAIL_URL="${hostUrl}/api/v1/send"
+export ORBITMAIL_FROM="notifications@${projectSlug}.com"`;
+
+	const githubSnippet = (key: string) => `# In your repo: Settings -> Secrets and variables -> Actions
+# Secret: ORBITMAIL_API_KEY = ${key}
+# Secret: ORBITMAIL_URL = ${hostUrl}/api/v1/send
+
+# .github/workflows/deploy.yml
 name: Deploy Application
 on: [push]
 jobs:
@@ -258,10 +264,96 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build & Deploy
         env:
-          ORBITMAIL_ROUTING_KEY: \${{ secrets.ORBITMAIL_ROUTING_KEY }}
-          ORBITMAIL_BASE_URL: \${{ secrets.ORBITMAIL_BASE_URL }}
-          MAIL_FROM: "notifications@${projectSlug}.com"
+          ORBITMAIL_API_KEY: \${{ secrets.ORBITMAIL_API_KEY }}
+          ORBITMAIL_URL: \${{ secrets.ORBITMAIL_URL }}
+          ORBITMAIL_FROM: "notifications@${projectSlug}.com"
         run: npm run deploy`;
+
+	const resendSnippet = (key: string) => `import { Resend } from "resend";
+
+// Optional: OrbitMail is 100% wire-compatible if your app already has the Resend SDK:
+const resend = new Resend(process.env.ORBITMAIL_API_KEY, {
+  baseUrl: "${hostUrl}/v1",
+});
+
+await resend.emails.send({
+  from: "notifications@${projectSlug}.com",
+  to: "user@example.com",
+  subject: "Welcome to ${projectName}!",
+  html: "<p>Your email delivered through OrbitMail.</p>",
+});`;
+
+	const aiAgentPrompt = (key: string) => `### TASK: Connect Email Delivery to OrbitMail
+We are using OrbitMail (hosted at ${hostUrl}) as our centralized email infrastructure.
+
+Please configure email delivery in this codebase with the following instructions:
+
+1. Environment Variables:
+   Add these to \`.env\` and your deployment platform (Vercel, Cloudflare, Docker, or VPS):
+   ORBITMAIL_API_KEY="${key}"
+   ORBITMAIL_URL="${hostUrl}/api/v1/send"
+   ORBITMAIL_FROM="notifications@${projectSlug}.com"
+
+2. Integration Strategy (Zero external SDK required - Native Fetch):
+   \`\`\`typescript
+   export async function sendEmail({
+     to,
+     subject,
+     html,
+   }: {
+     to: string | string[];
+     subject: string;
+     html: string;
+   }) {
+     const res = await fetch(process.env.ORBITMAIL_URL || "${hostUrl}/api/v1/send", {
+       method: "POST",
+       headers: {
+         "Authorization": \`Bearer \${process.env.ORBITMAIL_API_KEY}\`,
+         "Content-Type": "application/json",
+       },
+       body: JSON.stringify({
+         from: process.env.ORBITMAIL_FROM || "notifications@${projectSlug}.com",
+         to: Array.isArray(to) ? to : [to],
+         subject,
+         html,
+       }),
+     });
+
+     if (!res.ok) {
+       const err = await res.text();
+       throw new Error(\`OrbitMail send failed (\${res.status}): \${err}\`);
+     }
+
+     return await res.json();
+   }
+   \`\`\`
+
+3. Verification:
+   Send a test email to verify delivery. Expect HTTP 200 with message \`id\`.`;
+
+	const getDeploySnippet = () => {
+		switch (deployTarget) {
+			case "vercel":
+				return vercelSnippet(activeKeyForGuide);
+			case "cloudflare":
+				return cfSnippet(activeKeyForGuide);
+			case "docker":
+				return dockerSnippet(activeKeyForGuide);
+			case "github":
+				return githubSnippet(activeKeyForGuide);
+		}
+	};
+
+	const getCodeSnippet = () => {
+		switch (codeLang) {
+			case "typescript":
+				return nativeTsSnippet(activeKeyForGuide);
+			case "python":
+				return pythonSnippet(activeKeyForGuide);
+			case "curl":
+				return curlSnippet(activeKeyForGuide);
+		}
+	};
 
 	return (
 		<Dialog
@@ -295,7 +387,7 @@ jobs:
 									Save Your Secret Routing Key Now
 								</h4>
 								<p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
-									This secret key will <strong>never be shown again</strong>. Store it securely in your project&apos;s environment variables (<code className="font-mono">.env</code>) or use the guided AI prompt below to have your AI agent configure it.
+									This secret key will <strong>never be shown again</strong>. Store it securely in your project&apos;s environment variables (<code className="font-mono">.env</code>), Vercel, Cloudflare, or server environment.
 								</p>
 							</div>
 						</div>
@@ -333,7 +425,7 @@ jobs:
 							<div className="flex items-center gap-2">
 								<Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
 								<h4 className="text-xs font-semibold text-neutral-900 dark:text-neutral-100">
-									Integration Guide & AI Agent Prompt
+									Developer Integration & Deployment
 								</h4>
 							</div>
 							{viewingGuideKey && !newlyCreatedKey && (
@@ -347,8 +439,46 @@ jobs:
 							)}
 						</div>
 
-						{/* Tabs */}
-						<div className="flex items-center gap-1 rounded-xl bg-neutral-200/60 p-1 text-xs dark:bg-neutral-800">
+						{/* Top Level Tabs */}
+						<div className="flex flex-wrap items-center gap-1 rounded-xl bg-neutral-200/60 p-1 text-xs dark:bg-neutral-800">
+							<button
+								type="button"
+								onClick={() => setActiveTab("native_code")}
+								className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-colors ${
+									activeTab === "native_code"
+										? "bg-white text-blue-700 shadow-2xs dark:bg-neutral-900 dark:text-blue-400 font-semibold"
+										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+								}`}
+							>
+								<FileCode className="h-3.5 w-3.5" />
+								<span>OrbitMail Code</span>
+							</button>
+
+							<button
+								type="button"
+								onClick={() => setActiveTab("deploy")}
+								className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-colors ${
+									activeTab === "deploy"
+										? "bg-white text-blue-700 shadow-2xs dark:bg-neutral-900 dark:text-blue-400 font-semibold"
+										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+								}`}
+							>
+								<Globe2 className="h-3.5 w-3.5" />
+								<span>Deploy Anywhere (Vercel / CF / VPS)</span>
+							</button>
+
+							<button
+								type="button"
+								onClick={() => setActiveTab("env_file")}
+								className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-colors ${
+									activeTab === "env_file"
+										? "bg-white text-blue-700 shadow-2xs dark:bg-neutral-900 dark:text-blue-400 font-semibold"
+										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+								}`}
+							>
+								<span>.env File</span>
+							</button>
+
 							<button
 								type="button"
 								onClick={() => setActiveTab("ai_prompt")}
@@ -371,93 +501,53 @@ jobs:
 										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
 								}`}
 							>
-								<FileCode className="h-3.5 w-3.5" />
-								<span>Resend SDK</span>
-							</button>
-
-							<button
-								type="button"
-								onClick={() => setActiveTab("env_file")}
-								className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-colors ${
-									activeTab === "env_file"
-										? "bg-white text-blue-700 shadow-2xs dark:bg-neutral-900 dark:text-blue-400 font-semibold"
-										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-								}`}
-							>
-								<span>.env File</span>
-							</button>
-
-							<button
-								type="button"
-								onClick={() => setActiveTab("cf_secrets")}
-								className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-colors ${
-									activeTab === "cf_secrets"
-										? "bg-white text-blue-700 shadow-2xs dark:bg-neutral-900 dark:text-blue-400 font-semibold"
-										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-								}`}
-							>
-								<span>Secrets & CI/CD</span>
-							</button>
-
-							<button
-								type="button"
-								onClick={() => setActiveTab("curl")}
-								className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium transition-colors ${
-									activeTab === "curl"
-										? "bg-white text-blue-700 shadow-2xs dark:bg-neutral-900 dark:text-blue-400 font-semibold"
-										: "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-								}`}
-							>
-								<span>cURL Test</span>
+								<span>Resend SDK (Drop-in)</span>
 							</button>
 						</div>
 
-						{/* Tab 1: AI Agent Prompt */}
-						{activeTab === "ai_prompt" && (
-							<div className="space-y-2">
+						{/* Tab 1: OrbitMail Native Code */}
+						{activeTab === "native_code" && (
+							<div className="space-y-3">
 								<div className="flex items-center justify-between text-xs">
-									<p className="text-neutral-600 dark:text-neutral-300">
-										Paste this prompt directly into <strong>Cursor, Claude, Antigravity, or ChatGPT</strong> to have it connect this project:
-									</p>
+									<div className="flex items-center gap-2">
+										<span className="text-neutral-500">Language:</span>
+										<div className="inline-flex rounded-lg bg-neutral-200/80 p-0.5 dark:bg-neutral-800">
+											<button
+												type="button"
+												onClick={() => setCodeLang("typescript")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													codeLang === "typescript" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												TypeScript / Next.js
+											</button>
+											<button
+												type="button"
+												onClick={() => setCodeLang("python")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													codeLang === "python" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												Python
+											</button>
+											<button
+												type="button"
+												onClick={() => setCodeLang("curl")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													codeLang === "curl" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												cURL
+											</button>
+										</div>
+									</div>
 									<Button
 										size="sm"
 										variant="outline"
-										onClick={() => copyToClipboard(aiAgentPrompt(activeKeyForGuide), "prompt")}
-										className="h-7 gap-1.5 border-blue-300 bg-white text-xs font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-300"
-									>
-										{copiedPrompt ? (
-											<>
-												<Check className="h-3 w-3 text-emerald-500" />
-												<span>Copied Prompt!</span>
-											</>
-										) : (
-											<>
-												<Copy className="h-3 w-3" />
-												<span>Copy AI Prompt</span>
-											</>
-										)}
-									</Button>
-								</div>
-								<pre className="max-h-48 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
-									<code>{aiAgentPrompt(activeKeyForGuide)}</code>
-								</pre>
-							</div>
-						)}
-
-						{/* Tab 2: Resend SDK */}
-						{activeTab === "resend_code" && (
-							<div className="space-y-2">
-								<div className="flex items-center justify-between text-xs">
-									<p className="text-neutral-600 dark:text-neutral-300">
-										Drop-in replacement for Resend ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â just point <code className="font-mono">baseUrl</code> to OrbitMails:
-									</p>
-									<Button
-										size="sm"
-										variant="outline"
-										onClick={() => copyToClipboard(resendSnippet(activeKeyForGuide), "snippet")}
+										onClick={() => copyToClipboard(getCodeSnippet(), "code")}
 										className="h-7 gap-1.5 border-neutral-300 bg-white text-xs font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
 									>
-										{copiedSnippet ? (
+										{copiedCode ? (
 											<>
 												<Check className="h-3 w-3 text-emerald-500" />
 												<span>Copied Code!</span>
@@ -465,13 +555,83 @@ jobs:
 										) : (
 											<>
 												<Copy className="h-3 w-3" />
-												<span>Copy Code</span>
+												<span>Copy Snippet</span>
 											</>
 										)}
 									</Button>
 								</div>
-								<pre className="max-h-48 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
-									<code>{resendSnippet(activeKeyForGuide)}</code>
+								<pre className="max-h-56 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
+									<code>{getCodeSnippet()}</code>
+								</pre>
+							</div>
+						)}
+
+						{/* Tab 2: Deploy Anywhere (Vercel, Cloudflare, Docker/VPS, GitHub) */}
+						{activeTab === "deploy" && (
+							<div className="space-y-3">
+								<div className="flex items-center justify-between text-xs">
+									<div className="flex items-center gap-2">
+										<span className="text-neutral-500">Platform:</span>
+										<div className="inline-flex rounded-lg bg-neutral-200/80 p-0.5 dark:bg-neutral-800">
+											<button
+												type="button"
+												onClick={() => setDeployTarget("vercel")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													deployTarget === "vercel" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												▲ Vercel
+											</button>
+											<button
+												type="button"
+												onClick={() => setDeployTarget("cloudflare")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													deployTarget === "cloudflare" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												☁ Cloudflare
+											</button>
+											<button
+												type="button"
+												onClick={() => setDeployTarget("docker")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													deployTarget === "docker" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												🐳 Docker / VPS
+											</button>
+											<button
+												type="button"
+												onClick={() => setDeployTarget("github")}
+												className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors ${
+													deployTarget === "github" ? "bg-white shadow-2xs text-blue-700 dark:bg-neutral-900 dark:text-blue-400 font-semibold" : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+												}`}
+											>
+												🐙 CI/CD Actions
+											</button>
+										</div>
+									</div>
+									<Button
+										size="sm"
+										variant="outline"
+										onClick={() => copyToClipboard(getDeploySnippet(), "deploy")}
+										className="h-7 gap-1.5 border-neutral-300 bg-white text-xs font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+									>
+										{copiedDeploy ? (
+											<>
+												<Check className="h-3 w-3 text-emerald-500" />
+												<span>Copied Config!</span>
+											</>
+										) : (
+											<>
+												<Copy className="h-3 w-3" />
+												<span>Copy Config</span>
+											</>
+										)}
+									</Button>
+								</div>
+								<pre className="max-h-56 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
+									<code>{getDeploySnippet()}</code>
 								</pre>
 							</div>
 						)}
@@ -508,69 +668,66 @@ jobs:
 							</div>
 						)}
 
-						{/* Tab 4: Cloudflare Secrets & CI/CD */}
-						{activeTab === "cf_secrets" && (
-							<div className="space-y-3">
+						{/* Tab 4: AI Agent Prompt */}
+						{activeTab === "ai_prompt" && (
+							<div className="space-y-2">
 								<div className="flex items-center justify-between text-xs">
 									<p className="text-neutral-600 dark:text-neutral-300">
-										<strong>Cloudflare Secrets or GitHub Secrets:</strong> Save your routing key wherever your project runs — no GitHub required:
+										Paste this prompt directly into <strong>Cursor, Claude, Antigravity, or ChatGPT</strong> to have it connect this project:
 									</p>
 									<Button
 										size="sm"
 										variant="outline"
-										onClick={() => copyToClipboard(githubSnippet(activeKeyForGuide), "github")}
-										className="h-7 gap-1.5 border-neutral-300 bg-white text-xs font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+										onClick={() => copyToClipboard(aiAgentPrompt(activeKeyForGuide), "prompt")}
+										className="h-7 gap-1.5 border-blue-300 bg-white text-xs font-semibold text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:bg-neutral-900 dark:text-blue-300"
 									>
-										{copiedGithub ? (
+										{copiedPrompt ? (
 											<>
 												<Check className="h-3 w-3 text-emerald-500" />
-												<span>Copied!</span>
+												<span>Copied Prompt!</span>
 											</>
 										) : (
 											<>
 												<Copy className="h-3 w-3" />
-												<span>Copy Secrets & Action</span>
+												<span>Copy AI Prompt</span>
 											</>
 										)}
 									</Button>
 								</div>
-								<div className="rounded-xl border border-blue-200/80 bg-blue-50/60 p-3 text-xs text-blue-900 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-200 leading-relaxed">
-									ÃƒÂ°Ã…Â¸Ã¢â‚¬â„¢Ã‚Â¡ <strong>Zero Provider Secrets in Client Repos:</strong> Do not scatter raw AWS SES, Resend, or Brevo keys across your projects. Keep them encrypted and centralized in OrbitMails. Downstream projects only need their scoped <code className="font-mono font-semibold">ORBITMAIL_ROUTING_KEY</code>.
-								</div>
-								<pre className="max-h-52 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
-									<code>{githubSnippet(activeKeyForGuide)}</code>
+								<pre className="max-h-56 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
+									<code>{aiAgentPrompt(activeKeyForGuide)}</code>
 								</pre>
 							</div>
 						)}
 
-						{/* Tab 4: cURL */}
-						{activeTab === "curl" && (
+						{/* Tab 5: Resend SDK (Drop-in) */}
+						{activeTab === "resend_code" && (
 							<div className="space-y-2">
 								<div className="flex items-center justify-between text-xs">
 									<p className="text-neutral-600 dark:text-neutral-300">
-										Test directly from your terminal or deployment script:
+										Drop-in replacement for existing projects using the <code className="font-mono">resend</code> npm package:
 									</p>
 									<Button
 										size="sm"
 										variant="outline"
-										onClick={() => copyToClipboard(curlSnippet(activeKeyForGuide), "curl")}
+										onClick={() => copyToClipboard(resendSnippet(activeKeyForGuide), "resend")}
 										className="h-7 gap-1.5 border-neutral-300 bg-white text-xs font-medium text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
 									>
-										{copiedCurl ? (
+										{copiedResend ? (
 											<>
 												<Check className="h-3 w-3 text-emerald-500" />
-												<span>Copied cURL!</span>
+												<span>Copied Code!</span>
 											</>
 										) : (
 											<>
 												<Copy className="h-3 w-3" />
-												<span>Copy cURL</span>
+												<span>Copy Code</span>
 											</>
 										)}
 									</Button>
 								</div>
-								<pre className="max-h-48 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
-									<code>{curlSnippet(activeKeyForGuide)}</code>
+								<pre className="max-h-56 overflow-y-auto rounded-xl bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-200">
+									<code>{resendSnippet(activeKeyForGuide)}</code>
 								</pre>
 							</div>
 						)}
@@ -597,7 +754,7 @@ jobs:
 							</Label>
 							<Input
 								id="key-name-input"
-								placeholder="e.g. Aurelia Production Server"
+								placeholder="e.g. Production Web App"
 								value={keyName}
 								onChange={(e) => setKeyName(e.target.value)}
 								className="h-8 text-xs"
@@ -624,7 +781,7 @@ jobs:
 						{!newlyCreatedKey && !viewingGuideKey && (
 							<button
 								type="button"
-								onClick={() => setViewingGuideKey(`orb_live_${projectSlug}_...`)}
+								onClick={() => setViewingGuideKey(`om_live_${projectSlug}_...`)}
 								className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400"
 							>
 								<Bot className="h-3 w-3" />
@@ -658,11 +815,11 @@ jobs:
 										</div>
 										<div className="mt-1 flex items-center gap-2 font-mono text-[11px] text-neutral-500">
 											<span>{k.displayPrefix}</span>
-											<span>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢</span>
+											<span>•</span>
 											<span>Created {new Date(k.createdAt).toLocaleDateString()}</span>
 											{k.lastUsedAt && (
 												<>
-													<span>ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢</span>
+													<span>•</span>
 													<span>Last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>
 												</>
 											)}
@@ -675,13 +832,13 @@ jobs:
 											size="sm"
 											onClick={() => {
 												setViewingGuideKey(`${k.prefix}...`);
-												setActiveTab("ai_prompt");
+												setActiveTab("native_code");
 											}}
-											title="View AI Agent Prompt & Integration Code"
+											title="View Integration Code & Deployment Config"
 											className="h-7 gap-1 text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/40"
 										>
-											<Bot className="h-3.5 w-3.5" />
-											<span>AI Prompt</span>
+											<FileCode className="h-3.5 w-3.5" />
+											<span>Integration Code</span>
 										</Button>
 
 										{k.status === "active" && (

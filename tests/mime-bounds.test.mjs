@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const dir = mkdtempSync(join(tmpdir(), "mime-bounds-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
-const root = process.cwd();
+const root = process.cwd().replace(/\\/g, "/");
 const entry = join(dir, "entry.ts");
 writeFileSync(entry, `
 import { MimeLimitError, parseRawMime } from "${root}/src/lib/email/parse";

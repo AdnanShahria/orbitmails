@@ -623,9 +623,41 @@ export function MessageFolderPage({
 					))}
 				</div>
 				{!isLoading && messages.length === 0 && (
-					<p className="px-6 py-4 text-sm text-neutral-500">
-						{hasActiveFilters ? t("list.noMatch") : config.emptyTextKey ? t(config.emptyTextKey) : config.emptyText}
-					</p>
+					!selectedMailbox && !mailboxesLoading ? (
+						<div className="my-10 rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50/70 via-indigo-50/40 to-white p-8 text-center max-w-lg mx-auto shadow-sm">
+							<div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-md mb-4">
+								<Mail className="h-7 w-7" />
+							</div>
+							<h3 className="text-xl font-semibold text-neutral-900 mb-2">Welcome to OrbitMail</h3>
+							<p className="text-sm text-neutral-600 mb-6">
+								Get started by connecting your custom domain and creating your first mailbox, or generate developer API keys for transactional emails.
+							</p>
+							<div className="flex flex-wrap justify-center gap-3">
+								<Link
+									href="/settings/domains"
+									className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
+								>
+									Connect Domain
+								</Link>
+								<Link
+									href="/settings/mailboxes"
+									className="inline-flex items-center gap-2 rounded-full border border-neutral-300 bg-white px-5 py-2.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition-colors"
+								>
+									Create Mailbox
+								</Link>
+								<Link
+									href="/mailhub"
+									className="inline-flex items-center gap-2 rounded-full border border-emerald-300 bg-emerald-50 px-5 py-2.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100 transition-colors"
+								>
+									Developer API Keys
+								</Link>
+							</div>
+						</div>
+					) : (
+						<p className="px-6 py-4 text-sm text-neutral-500">
+							{hasActiveFilters ? t("list.noMatch") : config.emptyTextKey ? t(config.emptyTextKey) : config.emptyText}
+						</p>
+					)
 				)}
 			</div>
 		</div>

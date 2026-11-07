@@ -12,10 +12,15 @@ export function SettingsNav() {
 	const { t } = useLanguage();
 	const pathname = usePathname();
 	const user = useCurrentUser();
-	const canManageMailboxes = user?.canManageMailboxes === true;
+	const canManageMailboxes = user?.canManageMailboxes === true || user?.role === "admin";
+	const canManageDomains = user?.canManageDomains === true || user?.role === "admin";
 	const sections = settingsNavSections.map((section) => ({
 		...section,
-		items: section.items.filter((item) => !item.requiresMailboxAccess || canManageMailboxes),
+		items: section.items.filter((item) => {
+			if (item.requiresMailboxAccess && !canManageMailboxes) return false;
+			if (item.requiresDomainAccess && !canManageDomains) return false;
+			return true;
+		}),
 	}));
 	const currentItem = sections.flatMap((section) => section.items).find((item) => isActiveSettingsPath(pathname, item.href));
 	const currentLabel = t(currentItem?.labelKey ?? "settings.nav.settings");

@@ -34,6 +34,11 @@ export const settingsNavSections: SettingsNavSection[] = [
 		labelKey: "settings.nav.mailbox",
 		items: [
 			{
+				href: "/settings/domains",
+				labelKey: "admin.nav.domains",
+				requiresDomainAccess: true,
+			},
+			{
 				href: "/settings/mailboxes",
 				labelKey: "admin.nav.mailboxes",
 				requiresMailboxAccess: true,

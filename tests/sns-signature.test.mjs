@@ -18,7 +18,15 @@ await build({
 });
 const { verifySnsSignature, isValidSigningCertUrl } = await import(pathToFileURL(join(dir, "sns.mjs")).href);
 
-execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem"), "-subj", "/CN=sns.test", "-days", "2"], { stdio: "ignore" });
+const opensslBin = (() => {
+	try {
+		execFileSync("openssl", ["version"], { stdio: "ignore" });
+		return "openssl";
+	} catch {
+		return "C:\\Program Files\\Git\\usr\\bin\\openssl.exe";
+	}
+})();
+execFileSync(opensslBin, ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem"), "-subj", "/CN=sns.test", "-days", "2"], { stdio: "ignore" });
 const keyPem = readFileSync(join(dir, "key.pem"), "utf8");
 const certPem = readFileSync(join(dir, "cert.pem"), "utf8");
 const der = Buffer.from(certPem.replace(/-----[A-Z ]+-----/g, "").replace(/\s+/g, ""), "base64");

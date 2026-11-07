@@ -4,6 +4,7 @@ export type SettingsNavItem = {
 	href: string;
 	labelKey: TranslationKey;
 	requiresMailboxAccess?: boolean;
+	requiresDomainAccess?: boolean;
 };
 
 export type SettingsNavSection = {

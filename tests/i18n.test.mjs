@@ -59,7 +59,7 @@ async function bundleI18n(outfile, extraLocale = false) {
 		plugins: [{
 			name: "layout-runtime-stubs",
 			setup(builder) {
-				if (extraLocale) builder.onLoad({ filter: /\/i18n\/locales\.ts$/ }, ({ path }) => ({
+				if (extraLocale) builder.onLoad({ filter: /[\\/]i18n[\\/]locales\.ts$/ }, ({ path }) => ({
 					contents: readFileSync(path, "utf8").replace("export const locales = {", `export const locales = {
 						xx: { label: "Testlandic", dir: "rtl" },`),
 					loader: "ts",

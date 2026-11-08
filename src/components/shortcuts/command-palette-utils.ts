@@ -9,11 +9,11 @@ export function filterCommands(commands: CommandItem[], query: string): CommandI
   const lowerQuery = trimmed.toLowerCase();
 
   return commands.filter((cmd) => {
-    const matchTitle = cmd.title.toLowerCase().includes(lowerQuery);
+    const matchTitle = cmd.title?.toLowerCase().includes(lowerQuery);
     const matchSubtitle = cmd.subtitle?.toLowerCase().includes(lowerQuery);
-    const matchCategory = cmd.category.toLowerCase().includes(lowerQuery);
+    const matchCategory = cmd.category?.toLowerCase().includes(lowerQuery);
     const matchKeywords = cmd.keywords?.some((k) =>
-      k.toLowerCase().includes(lowerQuery)
+      k?.toLowerCase().includes(lowerQuery)
     );
     return matchTitle || matchSubtitle || matchCategory || matchKeywords;
   });

@@ -36,6 +36,7 @@ export function TestSendDialog({
 }: TestSendDialogProps) {
   const [recipient, setRecipient] = useState("developer@orbitmails.internal");
   const [subject, setSubject] = useState("MailHub Test Dispatch: Intelligent Failover Verification");
+  const [senderAddress, setSenderAddress] = useState("");
   const [routingMode, setRoutingMode] = useState<"auto" | ProviderId>("auto");
   const [isSending, setIsSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -64,6 +65,7 @@ export function TestSendDialog({
           projectId: project.id,
           recipient,
           subject,
+          senderAddress: senderAddress.trim() || undefined,
           routingMode: routingMode === "auto" ? undefined : routingMode,
         }),
       });
@@ -71,8 +73,34 @@ export function TestSendDialog({
       const data = (await res.json().catch(() => null)) as any;
 
       if (!res.ok || !data?.success) {
-        const errorText = data?.error || `Failed to send test email (HTTP ${res.status})`;
+        const errorText =
+          data?.error ||
+          data?.result?.waterfall?.find((w: any) => w.status !== 200)?.message ||
+          data?.result?.attempts?.find((a: any) => a.code !== "SUCCESS")?.message ||
+          `Failed to send test email (HTTP ${res.status})`;
         setErrorMessage(typeof errorText === "string" ? errorText : JSON.stringify(errorText));
+
+        if (data?.result?.waterfall || data?.result?.attempts) {
+          const resResult = data.result || {};
+          const providerUsed: ProviderId = resResult.providerUsed || project.primaryProvider;
+          const waterfall: Array<{ provider: string; status: number; message?: string; error?: string; latencyMs?: number }> =
+            resResult.waterfall ||
+            resResult.attempts?.map((a: any) => ({
+              provider: getProviderDisplayName(a.provider),
+              status: a.status || (a.code === "SUCCESS" ? 200 : a.code === "QUOTA_EXCEEDED" ? 429 : 500),
+              message: a.message || a.error || "Attempt failed",
+              latencyMs: a.latencyMs,
+            })) || [];
+
+          setResultTrace({
+            success: false,
+            providerUsed,
+            latencyMs: resResult.latencyMs || 0,
+            deliveryId: resResult.deliveryId,
+            waterfall,
+          });
+        }
+
         setIsSending(false);
         return;
       }
@@ -169,6 +197,22 @@ export function TestSendDialog({
         {/* Form Body */}
         <div className="mt-5 space-y-4">
           <div>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
+                Sender Address (From)
+              </label>
+              <span className="text-[10px] text-neutral-400">Optional: verified domain or onboarding@resend.dev</span>
+            </div>
+            <input
+              type="email"
+              value={senderAddress}
+              placeholder="e.g. onboarding@resend.dev or name@yourdomain.com"
+              onChange={(e) => setSenderAddress(e.target.value)}
+              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+            />
+          </div>
+
+          <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
               Recipient Address
             </label>
@@ -229,13 +273,32 @@ export function TestSendDialog({
 
           {/* Live Result Waterfall Trace */}
           {resultTrace && (
-            <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/60 p-4 text-xs dark:border-emerald-900/60 dark:bg-emerald-950/30">
-              <div className="flex items-center justify-between font-semibold text-emerald-800 dark:text-emerald-300">
-                <span className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  Live Dispatch Completed
+            <div className={`rounded-2xl border p-4 text-xs ${
+              resultTrace.success
+                ? "border-emerald-200/80 bg-emerald-50/60 dark:border-emerald-900/60 dark:bg-emerald-950/30"
+                : "border-amber-200/80 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30"
+            }`}>
+              <div className="flex items-center justify-between font-semibold">
+                <span className={`flex items-center gap-2 ${
+                  resultTrace.success ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"
+                }`}>
+                  {resultTrace.success ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      Live Dispatch Completed
+                    </>
+                  ) : (
+                    <>
+                      <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      Routing Waterfall Traversed
+                    </>
+                  )}
                 </span>
-                <span className="font-mono text-xs bg-emerald-100/70 dark:bg-emerald-900/50 px-2 py-0.5 rounded-md">
+                <span className={`font-mono text-xs px-2 py-0.5 rounded-md ${
+                  resultTrace.success
+                    ? "bg-emerald-100/70 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200"
+                    : "bg-amber-100/70 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+                }`}>
                   {resultTrace.latencyMs}ms
                 </span>
               </div>
@@ -246,14 +309,18 @@ export function TestSendDialog({
                 </div>
               )}
 
-              <div className="mt-3 space-y-2 border-t border-emerald-200/60 pt-2.5 text-neutral-800 dark:border-emerald-900/50 dark:text-neutral-200">
+              <div className={`mt-3 space-y-2 border-t pt-2.5 text-neutral-800 dark:text-neutral-200 ${
+                resultTrace.success
+                  ? "border-emerald-200/60 dark:border-emerald-900/50"
+                  : "border-amber-200/60 dark:border-amber-900/50"
+              }`}>
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400">
                   Live Waterfall Steps:
                 </div>
                 {resultTrace.waterfall.map((step, idx) => (
                   <div
                     key={idx}
-                    className="flex items-start justify-between gap-2 rounded-xl bg-white/70 dark:bg-neutral-800/60 p-2.5 border border-emerald-100 dark:border-emerald-950"
+                    className="flex items-start justify-between gap-2 rounded-xl bg-white/70 dark:bg-neutral-800/60 p-2.5 border border-neutral-200/50 dark:border-neutral-700/50"
                   >
                     <div className="min-w-0">
                       <span className="font-semibold text-neutral-900 dark:text-neutral-100">

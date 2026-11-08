@@ -88,9 +88,19 @@ export async function resolveCandidateCredentials(
 		}
 	}
 
-	// 2. If credentials already attached to candidate
-	if (candidate.credential) {
-		return candidate.credential;
+	// 2. If credentials already attached to candidate and contain actual credentials
+	if (
+		candidate.credential &&
+		(candidate.credential.apiKey ||
+			candidate.credential.apiKeyEnc ||
+			candidate.credential.sendMailToken ||
+			candidate.credential.accessKeyId ||
+			candidate.credential.emailBinding)
+	) {
+		return {
+			apiKey: candidate.credential.apiKey || candidate.credential.apiKeyEnc,
+			...candidate.credential,
+		};
 	}
 
 	// 3. Query from D1 Database if bound
@@ -112,37 +122,60 @@ export async function resolveCandidateCredentials(
 		}
 	}
 
-	// 4. Fallback to environment variables based on provider type
+	// 4. Fallback to environment variables or appSettings based on provider type
 	const providerType = candidate.provider.toLowerCase();
+	const envAny = env as Record<string, any>;
+	const processEnv: Record<string, any> = typeof process !== "undefined" && process.env ? process.env : {};
+
 	switch (providerType) {
-		case "brevo":
-			return { apiKey: env.BREVO_API_KEY || "" };
-		case "resend":
-			return { apiKey: env.RESEND_API_KEY || "" };
+		case "brevo": {
+			const apiKey = envAny.BREVO_API_KEY || processEnv?.BREVO_API_KEY || "";
+			return { apiKey: apiKey.trim() };
+		}
+		case "resend": {
+			let apiKey = envAny.RESEND_API_KEY || processEnv?.RESEND_API_KEY || "";
+			if (!apiKey && env.DB) {
+				try {
+					const row = await env.DB.prepare(
+						"SELECT resend_api_key FROM app_settings WHERE id = 'default' LIMIT 1",
+					).first();
+					if (row?.resend_api_key) apiKey = row.resend_api_key;
+				} catch {
+					// Fallback
+				}
+			}
+			return { apiKey: (apiKey || "").trim() };
+		}
 		case "zepto":
 		case "zeptomail":
 			return {
-				sendMailToken: env.ZEPTOMAIL_API_KEY || env.ZEPTO_API_KEY || "",
-				bounceAddress: env.ZEPTOMAIL_BOUNCE_ADDRESS,
+				sendMailToken:
+					envAny.ZEPTOMAIL_API_KEY ||
+					envAny.ZEPTO_API_KEY ||
+					processEnv?.ZEPTOMAIL_API_KEY ||
+					processEnv?.ZEPTO_API_KEY ||
+					"",
+				bounceAddress: envAny.ZEPTOMAIL_BOUNCE_ADDRESS || processEnv?.ZEPTOMAIL_BOUNCE_ADDRESS,
 			};
 		case "mailgun":
 			return {
-				apiKey: env.MAILGUN_API_KEY || "",
-				domain: env.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
-				region: env.MAILGUN_REGION || "us",
+				apiKey: envAny.MAILGUN_API_KEY || processEnv?.MAILGUN_API_KEY || "",
+				domain: envAny.MAILGUN_DOMAIN || processEnv?.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
+				region: envAny.MAILGUN_REGION || processEnv?.MAILGUN_REGION || "us",
 			};
 		case "ses":
 			return {
-				accessKeyId: env.AWS_ACCESS_KEY_ID || env.S3_ACCESS_KEY_ID || "",
-				secretAccessKey: env.AWS_SECRET_ACCESS_KEY || env.S3_SECRET_ACCESS_KEY || "",
-				region: env.AWS_REGION || env.S3_REGION || "us-east-1",
+				accessKeyId: envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || processEnv?.AWS_ACCESS_KEY_ID || "",
+				secretAccessKey:
+					envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || processEnv?.AWS_SECRET_ACCESS_KEY || "",
+				region: envAny.AWS_REGION || envAny.S3_REGION || processEnv?.AWS_REGION || "us-east-1",
 			};
 		case "cloudflare":
 			return {
-				emailBinding: env.EMAIL,
+				emailBinding: envAny.EMAIL,
 			};
 		default:
-			return { apiKey: "unknown" };
+			return { apiKey: envAny.RESEND_API_KEY || processEnv?.RESEND_API_KEY || "unknown" };
 	}
 }
 

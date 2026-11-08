@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { domains } from "@/db/schema";
 import { getEnv } from "@/lib/cloudflare";
 import { requireSessionUser } from "@/lib/api/auth";
 import { isPrimaryAdmin } from "@/lib/auth/admin";
@@ -7,6 +10,7 @@ import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { sendWithFailover } from "@/lib/mailhub/failover";
 import { getMailHubState } from "@/lib/mailhub/storage";
 import { createSendLogEntry, recordSendLogAsync } from "@/lib/mailhub/logging";
+import { pickSystemSender } from "@/lib/email/system-mail";
 import type { OutboundProviderMessage } from "@/lib/email/outbound-provider-types";
 import type { RoutingOptions } from "@/lib/mailhub/types";
 
@@ -39,6 +43,7 @@ const testSendSchema = z.object({
 	projectId: z.string().min(1),
 	recipient: z.string().email(),
 	subject: z.string().min(1).max(500),
+	senderAddress: z.string().email().optional(),
 	routingMode: z.string().optional(),
 });
 
@@ -61,7 +66,46 @@ export async function POST(request: Request) {
 
 		const projectName = project?.name || "MailHub Test Relay";
 		const projectSlug = project?.slug || data.projectId.replace(/^proj_/, "");
-		const fromAddress = `relay@${projectSlug}.mailhub.internal`;
+
+		let fromAddress = data.senderAddress?.trim();
+		if (!fromAddress) {
+			try {
+				const sysSender = await pickSystemSender(access.env as any);
+				if (sysSender?.address) {
+					fromAddress = sysSender.address;
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		if (!fromAddress && access.env?.DB) {
+			try {
+				const db = getDb(access.env as any);
+				const [activeDomain] = await db
+					.select({ hostname: domains.hostname })
+					.from(domains)
+					.where(eq(domains.status, "active"))
+					.limit(1);
+				if (activeDomain?.hostname) {
+					fromAddress = `relay@${activeDomain.hostname}`;
+				}
+			} catch {
+				// ignore
+			}
+		}
+
+		if (!fromAddress) {
+			const hasResend = !!(
+				(access.env as any)?.RESEND_API_KEY ||
+				(typeof process !== "undefined" && process.env?.RESEND_API_KEY)
+			);
+			if (hasResend || data.routingMode === "resend") {
+				fromAddress = "onboarding@resend.dev";
+			} else {
+				fromAddress = `relay@${projectSlug}.mailhub.internal`;
+			}
+		}
 
 		const routingOptions: RoutingOptions = {};
 		if (data.routingMode && data.routingMode !== "auto") {
@@ -82,10 +126,11 @@ export async function POST(request: Request) {
   <p style="margin: 0 0 12px 0; color: #4b5563; font-size: 13px;">Test dispatch from OrbitMails MailHub engine.</p>
   <div style="background: #f8fafc; padding: 12px; border-radius: 8px; font-size: 12px; color: #334155;">
     <strong>Recipient:</strong> ${data.recipient}<br/>
-    <strong>Project:</strong> ${projectName} (${projectSlug})
+    <strong>Project:</strong> ${projectName} (${projectSlug})<br/>
+    <strong>From:</strong> ${fromAddress}
   </div>
 </div>`,
-			text: `${data.subject}\n\nTest dispatch from OrbitMails MailHub engine.\nRecipient: ${data.recipient}\nProject: ${projectName} (${projectSlug})`,
+			text: `${data.subject}\n\nTest dispatch from OrbitMails MailHub engine.\nRecipient: ${data.recipient}\nProject: ${projectName} (${projectSlug})\nFrom: ${fromAddress}`,
 		};
 
 		const failoverResult = await sendWithFailover({
@@ -133,6 +178,29 @@ export async function POST(request: Request) {
 			recordSendLogAsync(logEntry, access.env as any);
 		} catch (logErr) {
 			console.warn("[POST /api/admin/mailhub/test-send] Failed to write send log:", logErr);
+		}
+
+		if (!failoverResult.success) {
+			const failedStep = waterfall.find((w) => w.status !== 200);
+			const primaryErrorMessage =
+				failedStep?.message ||
+				attempts[attempts.length - 1]?.message ||
+				attempts[0]?.message ||
+				(failoverResult as any).message ||
+				"All failover attempts failed";
+
+			return NextResponse.json({
+				success: false,
+				error: primaryErrorMessage,
+				result: {
+					providerUsed,
+					latencyMs,
+					messageId,
+					deliveryId: failoverResult.deliveryId,
+					attempts,
+					waterfall,
+				},
+			});
 		}
 
 		return NextResponse.json({

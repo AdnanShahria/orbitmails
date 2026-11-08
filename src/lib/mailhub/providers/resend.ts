@@ -33,8 +33,15 @@ export class ResendAdapter implements ProviderAdapter<ResendCredentials> {
 			? Object.entries(options.tags).map(([name, value]) => ({ name, value }))
 			: undefined;
 
+		let effectiveFrom = message.from;
+		if (effectiveFrom.includes(".internal") || effectiveFrom.includes("@mailhub.internal")) {
+			const nameMatch = message.from.match(/^([^<]+)<.+>$/);
+			const displayName = nameMatch ? nameMatch[1].trim() : "OrbitMails";
+			effectiveFrom = `${displayName} <onboarding@resend.dev>`;
+		}
+
 		const payload: Record<string, any> = {
-			from: message.from,
+			from: effectiveFrom,
 			to: message.to,
 			...(message.cc?.length ? { cc: message.cc } : {}),
 			...(message.bcc?.length ? { bcc: message.bcc } : {}),

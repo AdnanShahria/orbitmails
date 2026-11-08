@@ -66,6 +66,7 @@ export function useHotkeys(
     if (options.enabled === false) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e || typeof e.key !== "string") return;
       const isInput = isTypingInInput(e.target);
       const key = e.key.toLowerCase();
 
@@ -73,7 +74,7 @@ export function useHotkeys(
       if ((e.metaKey || e.ctrlKey) && key === "k") {
         const cmdK = shortcutsRef.current.find(
           (s) =>
-            s.key.toLowerCase() === "k" &&
+            s?.key?.toLowerCase() === "k" &&
             (s.modifiers?.includes("meta") || s.modifiers?.includes("ctrl"))
         );
         if (cmdK) {
@@ -86,7 +87,7 @@ export function useHotkeys(
       if (isInput) {
         if (e.key === "Escape") {
           const esc = shortcutsRef.current.find(
-            (s) => s.key.toLowerCase() === "escape" || s.key.toLowerCase() === "esc"
+            (s) => s?.key?.toLowerCase() === "escape" || s?.key?.toLowerCase() === "esc"
           );
           if (esc) esc.action();
         }
@@ -123,6 +124,7 @@ export function useHotkeys(
       }
 
       const singleMatch = shortcutsRef.current.find((s) => {
+        if (!s?.key) return false;
         if (s.key === "?" && e.key === "?") return true;
         if (s.key === "/" && e.key === "/") return true;
         if (s.key === "#" && e.key === "#") return true;

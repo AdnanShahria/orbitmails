@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth/cookies";
 import { getEnv } from "@/lib/cloudflare";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import { sendScheduledMessageNow } from "@/lib/email/send";
+import { getSendErrorStatus } from "@/app/api/send/error-utils";
 
 /**
  * Sends a queued message now instead of waiting for its undo window or scheduled time.
@@ -43,7 +44,7 @@ export async function POST(
 		}
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : "Send failed";
-		return NextResponse.json({ error: detail }, { status: 500 });
+		return NextResponse.json({ error: detail }, { status: getSendErrorStatus(detail) });
 	}
 	return NextResponse.json({ ok: true });
 }

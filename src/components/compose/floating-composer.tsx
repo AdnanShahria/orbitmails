@@ -44,9 +44,9 @@ function ComposeNoticeToast({ notice }: { notice: ComposeNotice }) {
 				const response = await authFetch(`/api/messages/${poll.messageId}/send-status`);
 				if (cancelled) return;
 				if (response.ok) {
-					const data = await response.json() as { status?: string };
+					const data = await response.json() as { status?: string; error?: string };
 					if (data.status === "sent") { poll.onStatus("sent"); return; }
-					if (data.status === "failed") { poll.onStatus("failed"); return; }
+					if (data.status === "failed") { poll.onStatus("failed", data.error); return; }
 					if (data.status === "draft") { poll.onStatus("cancelled"); return; }
 				}
 			} catch {

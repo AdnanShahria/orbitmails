@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
-import { messages } from "@/db/schema";
+import { messages, outboundJobs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { getEnv } from "@/lib/cloudflare";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
@@ -30,5 +30,15 @@ export async function GET(
 	const access = await getMailboxAccessLevel(db, user, message.mailboxId);
 	if (!access?.canRead) return NextResponse.json({ error: "Message not found" }, { status: 404 });
 
-	return NextResponse.json({ status: message.status }, { headers: { "Cache-Control": "no-store" } });
+	let error: string | undefined;
+	if (message.status === "failed") {
+		const [job] = await db
+			.select({ error: outboundJobs.error })
+			.from(outboundJobs)
+			.where(eq(outboundJobs.messageId, messageId))
+			.limit(1);
+		if (job?.error) error = job.error;
+	}
+
+	return NextResponse.json({ status: message.status, ...(error ? { error } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }

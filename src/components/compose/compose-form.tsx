@@ -514,14 +514,14 @@ export function ComposeForm({
 			durationMs: DELIVERY_WAIT_MS,
 			poll: {
 				messageId,
-				onStatus: (status) => {
+				onStatus: (status, error) => {
 					if (status === "sent") {
 						// Delivered: refresh the lists even if a newer toast has taken over.
 						showSentNotice(messageId, subjectLabel, noticeId);
 						return;
 					}
 					if (!isCurrentNotice(noticeId)) return;
-					if (status === "failed") showNotice(t("compose.error.sendFailed"), { tone: "error" });
+					if (status === "failed") showNotice(error ?? t("compose.error.sendFailed"), { tone: "error" });
 					else showNotice(null);
 				},
 			},
@@ -552,12 +552,6 @@ export function ComposeForm({
 			if (!isCurrentNotice(sourceNoticeId)) return;
 			if (response.status === 409) {
 				// The queued delivery claimed the message first; watch it instead of failing.
-				showSendingNotice(messageId, subjectLabel);
-				return;
-			}
-			if (response.status >= 500) {
-				// The request may have failed before claiming the job; the scheduled send can
-				// still deliver later, so let the status poll decide instead of reporting failure.
 				showSendingNotice(messageId, subjectLabel);
 				return;
 			}

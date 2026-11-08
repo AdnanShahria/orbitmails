@@ -3,11 +3,11 @@ const scriptEval = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'"
 
 const csp = [
 	"default-src 'self'",
-	`script-src 'self' 'unsafe-inline'${scriptEval} https://challenges.cloudflare.com`,
+	`script-src 'self' 'unsafe-inline'${scriptEval} https://challenges.cloudflare.com https://static.cloudflareinsights.com`,
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https:",
 	"font-src 'self' data:",
-	"connect-src 'self' ws: wss: https://challenges.cloudflare.com",
+	"connect-src 'self' ws: wss: https://challenges.cloudflare.com https://cloudflareinsights.com",
 	// 'self' lets the Drive preview show PDFs and text files in an iframe.
 	"frame-src 'self' https://challenges.cloudflare.com",
 	"object-src 'none'",

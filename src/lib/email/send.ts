@@ -85,6 +85,7 @@ export async function sendEmail(
 ): Promise<{ messageId: string; scheduled?: boolean; undoSeconds?: number; undoRemainingMs?: number; scheduledAt?: string }> {
 	const db = getDb(env);
 	const sender = await getAuthorizedSenderAddress(env, input);
+	await getOutboundProviderConfig(env, sender.fromAddr);
 	const attachments = input.attachments ?? [];
 	validateAttachments(attachments);
 	const maxAttachmentMb = await getOutboundAttachmentMaxMb(env);

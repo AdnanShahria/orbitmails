@@ -9,7 +9,7 @@ export type ComposeNoticeAction = { label: string; onClick: () => void | Promise
 export type ComposeNoticePoll = {
 	messageId: string;
 	/** Called once the message is sent, failed or returned to Drafts. */
-	onStatus: (status: "sent" | "failed" | "cancelled") => void;
+	onStatus: (status: "sent" | "failed" | "cancelled", error?: string) => void;
 };
 
 export type ComposeNoticeOptions = {

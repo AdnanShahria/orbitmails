@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth/cookies";
 import { getEnv } from "@/lib/cloudflare";
 import { hasPrimaryDomain, userHasMailboxes } from "@/lib/user";
 import { getLicenseEntitlements } from "@/lib/licenses/service";
-import { hasCloudflareCredentials, isNodeRuntime } from "@/lib/runtime";
+import { hasCloudflareCredentials, hasConfiguredCloudflare, isNodeRuntime } from "@/lib/runtime";
 
 export async function GET(request: Request) {
 	const env = getEnv();
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 			mfaEnabled: user.totpEnabled,
 		},
 		runtime: isNodeRuntime(env) ? "node" : "cloudflare",
-		managesDns: hasCloudflareCredentials(env),
+		managesDns: await hasConfiguredCloudflare(env),
 		hasMailboxes,
 		isSetup,
 	});

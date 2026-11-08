@@ -284,6 +284,15 @@
         "CREATE INDEX \"email_router_send_logs_provider_date_idx\" ON \"email_router_send_logs\" USING btree (\"provider\",\"date_bucket\");",
         "CREATE INDEX \"email_router_send_logs_sent_at_idx\" ON \"email_router_send_logs\" USING btree (\"sent_at\");"
       ]
+    },
+    {
+      "name": "0005_milky_morgan_stark.sql",
+      "statements": [
+        "ALTER TABLE \"app_settings\" ADD COLUMN \"cf_token\" text;",
+        "ALTER TABLE \"app_settings\" ADD COLUMN \"cf_oauth_client_id\" text;",
+        "ALTER TABLE \"app_settings\" ADD COLUMN \"cf_oauth_client_secret\" text;",
+        "ALTER TABLE \"app_settings\" ADD COLUMN \"cf_oauth_refresh_token\" text;"
+      ]
     }
   ]
 }

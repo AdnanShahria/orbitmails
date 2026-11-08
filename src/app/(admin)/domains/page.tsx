@@ -2,7 +2,7 @@
 
 import { mobilePrimaryActionClass } from "@/components/page-header-utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "@/components/language-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { List } from "@/components/ui/list";
-import { CheckCircle2, LoaderCircle, Plus } from "@/components/icons";
+import { CheckCircle2, Cloud, LoaderCircle, Plus, RefreshCw } from "@/components/icons";
 import { authFetch } from "@/lib/auth/client";
 import type { DnsAuthRecord, DnsStatusSummary, Domain, DomainDnsCache, DomainDnsView, DomainPreflight, ReceivingProvider, SendingProvider } from "./types";
 import DomainItemCard from "./DomainItemCard";
@@ -49,6 +49,54 @@ export default function DomainsPage() {
   const [dnsLoading, setDnsLoading] = useState(false);
   const [dnsError, setDnsError] = useState<string | null>(null);
   const [dnsViews, setDnsViews] = useState<DomainDnsCache>({});
+
+  const { data: cfStatus } = useQuery({
+    queryKey: ["cloudflare-status"],
+    queryFn: async () => {
+      const res = await authFetch("/api/auth/cloudflare/status");
+      return (await res.json()) as { connected: boolean; hasOauth: boolean; source: string | null };
+    },
+  });
+
+  const [syncing, setSyncing] = useState(false);
+  const syncCloudflare = async () => {
+    setSyncing(true);
+    try {
+      const res = await authFetch("/api/auth/cloudflare/sync", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Sync failed");
+      qc.invalidateQueries({ queryKey: ["domains"] });
+      qc.invalidateQueries({ queryKey: ["me"] });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const openCloudflareConnect = () => {
+    const width = 640;
+    const height = 760;
+    const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+    window.open(
+      "/api/auth/cloudflare/login",
+      "cf_oauth_popup",
+      `width=${width},height=${height},left=${left},top=${top},menubar=no,status=no,toolbar=no`
+    );
+  };
+
+  useEffect(() => {
+    const handleAuthMessage = (event: MessageEvent) => {
+      if (event.data?.type === "CLOUDFLARE_AUTH_SUCCESS") {
+        qc.invalidateQueries({ queryKey: ["domains"] });
+        qc.invalidateQueries({ queryKey: ["me"] });
+        qc.invalidateQueries({ queryKey: ["cloudflare-status"] });
+      }
+    };
+    window.addEventListener("message", handleAuthMessage);
+    return () => window.removeEventListener("message", handleAuthMessage);
+  }, [qc]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["domains"],
@@ -283,14 +331,38 @@ export default function DomainsPage() {
               : t("domains.descriptionManual")}
           </p>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button className={mobilePrimaryActionClass}>
-              <Plus className="h-4 w-4" />
-              {t("domains.new")}
+        <div className="flex items-center gap-2">
+          {cfStatus?.connected && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void syncCloudflare()}
+              disabled={syncing}
+              className="hidden sm:inline-flex items-center gap-1.5"
+              title="Sync and auto-add any new active domains from your Cloudflare account"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin text-orange-500" : "text-neutral-500"}`} />
+              {syncing ? "Syncing..." : "Sync Domains"}
             </Button>
-          </DialogTrigger>
-          <DialogContent>
+          )}
+          <Button
+            variant="outline"
+            className="flex items-center gap-2 border-orange-200 bg-orange-50/50 hover:bg-orange-100/70 text-orange-700"
+            onClick={openCloudflareConnect}
+            title={cfStatus?.connected ? "Cloudflare is connected. Click to re-authorize or manage." : "Connect Cloudflare to auto-import and manage your domains"}
+          >
+            <Cloud className="h-4 w-4 text-orange-500" />
+            <span className="hidden sm:inline">{cfStatus?.connected ? "Cloudflare Connected" : "Connect Cloudflare"}</span>
+            <span className="sm:hidden">{cfStatus?.connected ? "Cloudflare" : "Connect"}</span>
+          </Button>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className={mobilePrimaryActionClass}>
+                <Plus className="h-4 w-4" />
+                {t("domains.new")}
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
             <DialogHeader>
               <DialogTitle>{t("domains.addTitle")}</DialogTitle>
               <DialogDescription>
@@ -422,6 +494,7 @@ export default function DomainsPage() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
       <section className="space-y-3">
         {/* <div className="flex items-center justify-between">

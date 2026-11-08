@@ -901,6 +901,11 @@ export const appSettings = sqliteTable("app_settings", {
 	spamDomainAgeCheck: bool("spam_domain_age_check").notNull().default(true),
 	/** JSON: brands the administrator added for display-name impersonation checks (see src/lib/spam/settings.ts). */
 	spamBrands: text("spam_brands"),
+	/** Cloudflare API token or OAuth access token; falls back to CF_TOKEN env var when null. */
+	cfToken: text("cf_token"),
+	cfOauthClientId: text("cf_oauth_client_id"),
+	cfOauthClientSecret: text("cf_oauth_client_secret"),
+	cfOauthRefreshToken: text("cf_oauth_refresh_token"),
 	updatedAt: timestamp("updated_at")
 		.notNull()
 		.$defaultFn(() => new Date()),

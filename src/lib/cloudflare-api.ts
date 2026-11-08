@@ -11,6 +11,7 @@ import {
 	getCloudflareAuthHeaders,
 	getCloudflareAuthHint,
 	getEmailWorkerName,
+	resolveCloudflareAuth,
 } from "@/lib/cloudflare-api-utils";
 import { CloudflareApiError } from "@/lib/cloudflare-api-error";
 import { getZoneLookupCandidates } from "@/lib/domains/utils";
@@ -20,8 +21,9 @@ export async function cfRequest<T>(
 	env: CloudflareEnv,
 	path: string,
 	init?: RequestInit,
+	customAuth?: CfAuth,
 ): Promise<T> {
-	const auth = getCloudflareAuth(env);
+	const auth = customAuth ?? await resolveCloudflareAuth(env);
 	const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
 		...init,
 		headers: {

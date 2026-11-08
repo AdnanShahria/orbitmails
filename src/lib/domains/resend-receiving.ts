@@ -24,8 +24,8 @@ async function storeWebhook(env: CloudflareEnv, id: string | null, secret: strin
 	await getDb(env).insert(appSettings).values({ id: "default", ...values }).onConflictDoUpdate({ target: appSettings.id, set: values });
 }
 
-function inboundMx(records: { type: string; value: string; priority?: number }[] | undefined) {
-	return (records ?? []).find((record) => record.type === "MX" && isInboundSmtpMx(record.value)) ?? null;
+function inboundMx(records: { type: string; value: string; priority?: number; record?: string }[] | undefined) {
+	return (records ?? []).find((record) => record.type === "MX" && (isInboundSmtpMx(record.value) || record.record?.toLowerCase() === "inbound")) ?? null;
 }
 
 function isPublicHttps(origin: string): boolean {
@@ -69,7 +69,11 @@ export async function setupResendReceiving(
 		resend = await getResendDomain(apiKey, resend.id);
 	}
 	const mx = inboundMx(resend.records);
-	if (!mx) throw new Error("Resend did not return a receiving MX record for this domain.");
+	if (!mx) {
+		throw new Error(
+			`Resend did not return a receiving MX record for ${domain.hostname}. Please enable Receiving in your Resend Dashboard (Domains → ${domain.hostname} → Receiving → Enable Receiving).`
+		);
+	}
 	await publishMx(env, domain, mx.value, { replace: options.replaceMx, priority: mx.priority });
 	await ensureWebhook(env, apiKey, origin);
 	await verifyResendDomain(apiKey, resend.id).catch(() => undefined);

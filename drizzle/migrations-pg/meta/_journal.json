@@ -36,6 +36,13 @@
       "when": 1793781049665,
       "tag": "0004_add_email_router_send_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794102165875,
+      "tag": "0005_milky_morgan_stark",
+      "breakpoints": true
     }
   ]
 }

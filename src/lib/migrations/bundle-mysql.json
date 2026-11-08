@@ -263,6 +263,15 @@
         "CREATE INDEX `email_router_send_logs_provider_date_idx` ON `email_router_send_logs` (`provider`,`date_bucket`);",
         "CREATE INDEX `email_router_send_logs_sent_at_idx` ON `email_router_send_logs` (`sent_at`);"
       ]
+    },
+    {
+      "name": "0005_shallow_bulldozer.sql",
+      "statements": [
+        "ALTER TABLE `app_settings` ADD `cf_token` longtext;",
+        "ALTER TABLE `app_settings` ADD `cf_oauth_client_id` longtext;",
+        "ALTER TABLE `app_settings` ADD `cf_oauth_client_secret` longtext;",
+        "ALTER TABLE `app_settings` ADD `cf_oauth_refresh_token` longtext;"
+      ]
     }
   ]
 }

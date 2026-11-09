@@ -39,3 +39,4 @@ export async function hasConfiguredCloudflare(env: CloudflareEnv): Promise<boole
 		return false;
 	}
 }
+

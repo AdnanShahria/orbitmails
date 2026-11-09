@@ -20,28 +20,6 @@ export function getCloudflareAuth(env: CloudflareEnv): CfAuth {
 	throw new Error("CF_TOKEN or CF_API_KEY is not configured");
 }
 
-export async function resolveCloudflareAuth(env: CloudflareEnv): Promise<CfAuth> {
-	try {
-		return getCloudflareAuth(env);
-	} catch {
-		try {
-			const { getDb } = await import("@/db");
-			const { appSettings } = await import("@/db/schema");
-			const { eq } = await import("drizzle-orm");
-			const db = getDb(env);
-			const [row] = await db
-				.select({ cfToken: appSettings.cfToken })
-				.from(appSettings)
-				.where(eq(appSettings.id, "default"))
-				.limit(1);
-			if (row?.cfToken?.trim()) {
-				return { kind: "token", token: row.cfToken.trim() };
-			}
-		} catch {}
-		throw new Error("Cloudflare is not connected. Connect your Cloudflare account to manage domains and DNS.");
-	}
-}
-
 export function getCloudflareAuthHeaders(auth: CfAuth): HeadersInit {
 	if (auth.kind === "global-key") {
 		return {

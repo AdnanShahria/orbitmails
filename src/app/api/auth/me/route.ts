@@ -3,7 +3,8 @@ import { getCurrentUser } from "@/lib/auth/cookies";
 import { getEnv } from "@/lib/cloudflare";
 import { hasPrimaryDomain, userHasMailboxes } from "@/lib/user";
 import { getLicenseEntitlements } from "@/lib/licenses/service";
-import { hasCloudflareCredentials, hasConfiguredCloudflare, isNodeRuntime } from "@/lib/runtime";
+import { hasCloudflareCredentials, isNodeRuntime } from "@/lib/runtime";
+import { hasConfiguredCloudflare } from "@/lib/domains/cloudflare-auth";
 
 export async function GET(request: Request) {
 	const env = getEnv();

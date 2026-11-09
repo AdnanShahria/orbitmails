@@ -11,8 +11,8 @@ import {
 	getCloudflareAuthHeaders,
 	getCloudflareAuthHint,
 	getEmailWorkerName,
-	resolveCloudflareAuth,
 } from "@/lib/cloudflare-api-utils";
+import { resolveCloudflareAuth } from "@/lib/domains/cloudflare-auth";
 import { CloudflareApiError } from "@/lib/cloudflare-api-error";
 import { getZoneLookupCandidates } from "@/lib/domains/utils";
 export type { CfDnsRecord } from "@/lib/cloudflare-api.types";

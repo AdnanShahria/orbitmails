@@ -1,4 +1,5 @@
 import type {
+	CfAuth,
 	CfDnsRecord,
 	CfEmailRoutingRule,
 	CfEmailRoutingRuleChange,

@@ -17,6 +17,7 @@ export async function GET(request: Request) {
 
 	const url = new URL(request.url);
 	const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), 200);
+	const offset = Math.max(Number(url.searchParams.get("offset") ?? 0), 0);
 	const rows = await getDb(env)
 		.select({
 			id: auditLogs.id,
@@ -29,7 +30,8 @@ export async function GET(request: Request) {
 		.leftJoin(users, eq(users.id, auditLogs.actorUserId))
 		.where(inArray(auditLogs.action, ["auth.login", "auth.logout"]))
 		.orderBy(desc(auditLogs.createdAt))
-		.limit(limit);
+		.limit(limit)
+		.offset(offset);
 
 	return NextResponse.json({ activities: rows });
 }

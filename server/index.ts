@@ -57,6 +57,10 @@ async function main() {
 	const trustProxy = ["1", "true", "yes"].includes((process.env.TRUST_PROXY ?? "").toLowerCase());
 
 	const server = createServer((request, response) => {
+		// Strip server signature headers in production
+		response.removeHeader("X-Powered-By");
+		response.removeHeader("Server");
+
 		// The only client IP that cannot be forged is the socket's. Next sees
 		// re-serialized headers, so stamp the resolved IP into a private header
 		// after removing every client-supplied forwarding header — otherwise a
@@ -100,8 +104,9 @@ async function main() {
 	});
 
 	const smtpPort = Number(process.env.SMTP_INBOUND_PORT ?? 25);
+	let smtpServer: ReturnType<typeof startSmtpListener> | null = null;
 	if (smtpPort > 0) {
-		startSmtpListener(env, runtime.mailer, {
+		smtpServer = startSmtpListener(env, runtime.mailer, {
 			port: smtpPort,
 			host: process.env.SMTP_INBOUND_HOST,
 			maxSize: Number(process.env.SMTP_MAX_SIZE ?? 36 * 1024 * 1024),
@@ -111,16 +116,55 @@ async function main() {
 	}
 	const stopScheduler = startScheduler(env);
 
-	const shutdown = () => {
+	let isShuttingDown = false;
+	const shutdown = (signal: string) => {
+		if (isShuttingDown) return;
+		isShuttingDown = true;
+		console.log(`Received ${signal}. Initiating graceful shutdown...`);
+
+		// Stop periodic background tasks and queues
 		stopScheduler();
 		runtime.inboundQueue.stop();
 		runtime.outboundQueue.stop();
 		runtime.agentQueue.stop();
-		server.close(() => process.exit(0));
-		setTimeout(() => process.exit(0), 5000).unref();
+
+		// Stop SMTP listener if active
+		if (smtpServer) {
+			smtpServer.close(() => {
+				console.log("SMTP listener stopped.");
+			});
+		}
+
+		// Close WebSocket server
+		wss.close(() => {
+			console.log("WebSocket server closed.");
+		});
+
+		// Close idle keep-alive connections on HTTP server
+		if (typeof (server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections === "function") {
+			(server as unknown as { closeIdleConnections: () => void }).closeIdleConnections();
+		}
+
+		// Allow in-flight requests to complete
+		server.close((err) => {
+			if (err) {
+				console.error("Error closing HTTP server:", err);
+				process.exit(1);
+			}
+			console.log("HTTP server closed cleanly. Exiting.");
+			process.exit(0);
+		});
+
+		// Hard deadline fallback: exit after 10s if inflight requests do not finish
+		const forceTimeout = setTimeout(() => {
+			console.warn("Graceful shutdown timeout exceeded (10s). Forcing termination.");
+			process.exit(0);
+		}, 10_000);
+		forceTimeout.unref();
 	};
-	process.on("SIGTERM", shutdown);
-	process.on("SIGINT", shutdown);
+
+	process.on("SIGTERM", () => shutdown("SIGTERM"));
+	process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 main().catch((error) => {

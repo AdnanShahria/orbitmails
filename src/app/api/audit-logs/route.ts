@@ -17,6 +17,7 @@ export async function GET(request: Request) {
 
 	const url = new URL(request.url);
 	const limit = Math.min(Number(url.searchParams.get("limit") ?? 100), 200);
+	const offset = Math.max(Number(url.searchParams.get("offset") ?? 0), 0);
 	const db = getDb(env);
 	const targetUsers = aliasedTable(users, "target_users");
 	const rows = await db
@@ -37,7 +38,8 @@ export async function GET(request: Request) {
 		.leftJoin(domains, eq(domains.id, mailboxes.domainId))
 		.where(inArray(auditLogs.action, ["auth.login", "auth.logout"]))
 		.orderBy(desc(auditLogs.createdAt))
-		.limit(limit);
+		.limit(limit)
+		.offset(offset);
 
 	return NextResponse.json({ auditLogs: rows });
 }

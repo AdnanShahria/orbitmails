@@ -3,6 +3,9 @@
   "version": "0.5.4",
   "private": true,
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "backup:validate": "node scripts/validate-backup-dr.mjs",
     "dev": "npm run db:bundle && vp dev --port 3000",
     "dev:full": "npm run db:bundle && vp dev --port 3000",
     "build": "npm run db:bundle && vp build",

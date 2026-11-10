@@ -93,10 +93,11 @@ export async function GET(request: Request) {
 		.where(eq(appSettings.id, "default"))
 		.limit(1);
 
-	const envClientId = (env as Record<string, string | undefined>).CLOUDFLARE_CLIENT_ID?.trim() ||
-		(env as Record<string, string | undefined>).CF_OAUTH_CLIENT_ID?.trim();
-	const envClientSecret = (env as Record<string, string | undefined>).CLOUDFLARE_CLIENT_SECRET?.trim() ||
-		(env as Record<string, string | undefined>).CF_OAUTH_CLIENT_SECRET?.trim();
+	const envRecord = env as unknown as Record<string, string | undefined>;
+	const envClientId = envRecord.CLOUDFLARE_CLIENT_ID?.trim() ||
+		envRecord.CF_OAUTH_CLIENT_ID?.trim();
+	const envClientSecret = envRecord.CLOUDFLARE_CLIENT_SECRET?.trim() ||
+		envRecord.CF_OAUTH_CLIENT_SECRET?.trim();
 
 	const clientId = envClientId || settings?.clientId;
 	const clientSecret = envClientSecret || settings?.clientSecret;

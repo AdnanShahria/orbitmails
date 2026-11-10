@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 import { getSecurityHeaders } from "./src/lib/security/headers";
 
 const nextConfig: NextConfig = {
+	compress: true,
+	poweredByHeader: false,
+	assetPrefix: process.env.CDN_URL?.trim() || undefined,
 	distDir: process.env.ORBITFLARE_RUNTIME === "node" ? ".next-node" : undefined,
 	turbopack: {
 		root: import.meta.dirname,
@@ -35,6 +38,14 @@ const nextConfig: NextConfig = {
 			{
 				source: "/v3/smtp/email",
 				destination: "/api/v1/send",
+			},
+			{
+				source: "/health/live",
+				destination: "/api/health/live",
+			},
+			{
+				source: "/health/ready",
+				destination: "/api/health/ready",
 			},
 		];
 	},

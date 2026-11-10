@@ -24,8 +24,9 @@ export async function GET(request: Request) {
 		.limit(1);
 
 	const envToken = env.CF_TOKEN?.trim();
-	const envOauthClientId = (env as Record<string, string | undefined>).CLOUDFLARE_CLIENT_ID?.trim() ||
-		(env as Record<string, string | undefined>).CF_OAUTH_CLIENT_ID?.trim();
+	const envRecord = env as unknown as Record<string, string | undefined>;
+	const envOauthClientId = envRecord.CLOUDFLARE_CLIENT_ID?.trim() ||
+		envRecord.CF_OAUTH_CLIENT_ID?.trim();
 
 	const isEnvConnected = hasCloudflareCredentials(env);
 	const isDbConnected = !!settings?.cfToken?.trim();

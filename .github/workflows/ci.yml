@@ -1,0 +1,40 @@
+name: CI & Migration Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    name: Lint, Test & Validate Migrations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: TypeScript Static Typecheck
+        run: npx tsc --noEmit
+
+      - name: Verify Multi-Dialect Migration Bundle
+        run: |
+          npm run db:bundle
+          git diff --exit-code || (echo "Migration bundle out of sync. Run 'npm run db:bundle' locally." && exit 1)
+
+      - name: Run Test Suite
+        run: node --test tests/*.test.mjs
+
+      - name: Disaster Recovery Backup Validation Test
+        run: node scripts/validate-backup-dr.mjs
+

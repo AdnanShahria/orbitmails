@@ -21,7 +21,7 @@ export function getSecurityHeaders() {
 	return [
 		{ key: "X-Robots-Tag", value: "noindex, nofollow, noarchive, nosnippet, noimageindex" },
 		{ key: "Content-Security-Policy", value: csp },
-		{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+		{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" },
 		{ key: "X-Content-Type-Options", value: "nosniff" },
 		{ key: "X-Frame-Options", value: "SAMEORIGIN" },
 		// No window the app opens or that opens the app keeps a reference to it.

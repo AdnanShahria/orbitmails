@@ -63,7 +63,7 @@ export default function DomainsPage() {
     setSyncing(true);
     try {
       const res = await authFetch("/api/auth/cloudflare/sync", { method: "POST" });
-      const data = await res.json();
+      const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Sync failed");
       qc.invalidateQueries({ queryKey: ["domains"] });
       qc.invalidateQueries({ queryKey: ["me"] });

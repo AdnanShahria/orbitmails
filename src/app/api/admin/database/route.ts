@@ -50,21 +50,11 @@ export async function GET(request: Request) {
 				.map((r) => r.name)
 				.filter((name) => !EXCLUDED_TABLE_PREFIXES.some((prefix) => name.startsWith(prefix)));
 
-			// Gather row counts safely
-			const tablesWithCounts = await Promise.all(
-				tableNames.map(async (name) => {
-					try {
-						// Table names from sqlite_master are safe identifiers
-						const countResult = await db.prepare(`SELECT count(*) as count FROM "${name}"`).first();
-						return {
-							name,
-							count: Number(countResult?.count ?? 0),
-						};
-					} catch {
-						return { name, count: 0 };
-					}
-				})
-			);
+			// Return table list immediately without running 60+ parallel counts to prevent Error 1102 CPU limit
+			const tablesWithCounts = tableNames.map((name) => ({
+				name,
+				count: 0,
+			}));
 
 			return NextResponse.json({
 				tables: tablesWithCounts,

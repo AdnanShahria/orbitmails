@@ -22,7 +22,7 @@ export function getBackupConfigurationStatus(_env?: CloudflareEnv) {
 /**
  * Tables D1 manages itself, which are intentionally absent from BACKUP_TABLES.
  */
-export const INTERNAL_TABLE_PATTERNS = ["sqlite_%", "_cf%", "messages_fts%"];
+export const INTERNAL_TABLE_PATTERNS = ["sqlite_%", "_cf%", "messages_fts%", "mailhub_%"];
 const matchesPattern = (name: string, pattern: string) => name.startsWith(pattern.replace(/%$/, ""));
 /**
  * The search index is derived data: its triggers repopulate it as messages are
@@ -48,8 +48,12 @@ export const INTERNAL_TABLES = [
 	"push_subscriptions",
 	// Import jobs are transient progress records tied to staged objects that a backup does not carry.
 	"import_jobs",
-	// Send logs are high-throughput telemetry/analytics logs, internally managed.
+	// MailHub router tables and telemetry logs are managed separately from user mailbox backups.
 	"email_router_send_logs",
+	"projects",
+	"project_routing_keys",
+	"provider_credentials",
+	"project_provider_allocations",
 ];
 
 /**

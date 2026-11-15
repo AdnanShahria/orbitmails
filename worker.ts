@@ -34,6 +34,8 @@ export { RealtimeHub } from "./src/lib/realtime/hub";
 export { QuotaCoordinator } from "./src/lib/router/quota-durable-object";
 import { runHealthMonitoringJob, runDailyDigestJob } from "./src/lib/mailhub/monitoring";
 import { processParallelQueueBatch, type QueuedEmailJob } from "./src/lib/mailhub/high-throughput";
+import { isMailHubDlqJob } from "./src/lib/mailhub/dlq";
+import { sendWithFailover } from "./src/lib/mailhub/failover";
 
 export default {
 	async fetch(request: Request, rawEnv: CloudflareEnv, ctx: ExecutionContext) {
@@ -170,6 +172,18 @@ export default {
 					await processImportJob(env, { ...msg.body, attempt: msg.attempts });
 				} else if (typeof msg.body === "object" && msg.body !== null && (msg.body as { kind?: unknown }).kind === "email.scheduled") {
 					await processOutboundQueue(env, msg.body as OutboundQueueMessage);
+				} else if (isMailHubDlqJob(msg.body)) {
+					const retryResult = await sendWithFailover({
+						env: { ...(env as any), SEND_QUEUE: undefined, OUTBOUND_QUEUE: undefined, MAILHUB_DLQ: undefined },
+						projectId: msg.body.projectId,
+						deliveryId: msg.body.deliveryId,
+						dateBucket: msg.body.dateBucket,
+						message: msg.body.message,
+						options: msg.body.options,
+					});
+					if (!retryResult.success) {
+						throw new Error(retryResult.message || "MailHub queue retry failed");
+					}
 				} else {
 					throw new Error("Unknown queue message type");
 				}

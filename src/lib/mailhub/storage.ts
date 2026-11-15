@@ -225,6 +225,15 @@ export const DEFAULT_MAILHUB_STATE: MailHubState = {
 export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
 	providers: [
 		{
+			id: "cred_cloudflare_main",
+			provider: "cloudflare",
+			label: "Cloudflare Native Email",
+			dailyLimit: 10000,
+			costPerK: 0,
+			enabled: true,
+			configured: true,
+		},
+		{
 			id: "cred_brevo_main",
 			provider: "brevo",
 			label: "Brevo Shared Primary (300/day free limit)",
@@ -264,53 +273,55 @@ export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
 	],
 	projects: [
 		{
+			id: "proj_fashion-doniya",
+			name: "Fashion Doniya",
+			slug: "fashion-doniya",
+			description: "Fashion Doniya e-commerce transactional & notification routing",
+			status: "active",
+			providerOrder: ["cred_cloudflare_main", "cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+			createdAt: "2026-11-01T00:00:00.000Z",
+			updatedAt: "2026-11-01T00:00:00.000Z",
+		},
+		{
 			id: "proj_production",
 			name: "Production",
 			slug: "production",
 			description: "Primary MailHub transactional delivery & routing",
 			status: "active",
-			providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
-			createdAt: "2026-11-01T00:00:00.000Z",
-			updatedAt: "2026-11-01T00:00:00.000Z",
-		},
-		{
-			id: "proj_fashiondoniya",
-			name: "Fashion Doniya",
-			slug: "fashiondoniya",
-			description: "Fashion Doniya e-commerce transactional & notification routing",
-			status: "active",
-			providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+			providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_cloudflare_main", "cred_ses_backup"],
 			createdAt: "2026-11-01T00:00:00.000Z",
 			updatedAt: "2026-11-01T00:00:00.000Z",
 		},
 	],
 	allocations: [
+		{ projectId: "proj_fashion-doniya", providerId: "cred_cloudflare_main", dailySlice: 10000, priority: 1, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_brevo_main", dailySlice: 0, priority: 2, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_resend_main", dailySlice: 0, priority: 3, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_ses_backup", dailySlice: 0, priority: 4, usedToday: 0 },
 		{ projectId: "proj_production", providerId: "cred_brevo_main", dailySlice: 300, priority: 1, usedToday: 0 },
 		{ projectId: "proj_production", providerId: "cred_resend_main", dailySlice: 100, priority: 2, usedToday: 0 },
-		{ projectId: "proj_production", providerId: "cred_ses_backup", dailySlice: 10000, priority: 3, usedToday: 0 },
-		{ projectId: "proj_fashiondoniya", providerId: "cred_brevo_main", dailySlice: 150, priority: 1, usedToday: 0 },
-		{ projectId: "proj_fashiondoniya", providerId: "cred_resend_main", dailySlice: 50, priority: 2, usedToday: 0 },
-		{ projectId: "proj_fashiondoniya", providerId: "cred_ses_backup", dailySlice: 5000, priority: 3, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_cloudflare_main", dailySlice: 5000, priority: 3, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_ses_backup", dailySlice: 10000, priority: 4, usedToday: 0 },
 	],
 	keys: [
 		{
-			id: "rkey_production_live",
-			projectId: "proj_production",
-			name: "Production API Key",
-			prefix: "om_live_prod_8f3a9e",
-			displayPrefix: "om_live_prod_8f3a9e••••••••",
-			keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			id: "rkey_fashion_doniya_live",
+			projectId: "proj_fashion-doniya",
+			name: "Fashion Doniya Live Key",
+			prefix: "om_live_fashion-doniya_1386a2",
+			displayPrefix: "om_live_fashion-doniya_1386a2••••••••",
+			keyHash: "399268ea955517bbc587f1b9fc6ad10a7d65bd22228aa851569be878f23af886",
 			environment: "live",
 			status: "active",
 			createdAt: "2026-11-01T00:00:00.000Z",
 			lastUsedAt: null,
 		},
 		{
-			id: "rkey_fashiondoniya_live",
-			projectId: "proj_fashiondoniya",
-			name: "Fashion Doniya Live Key",
-			prefix: "om_live_fashiondoniya_7a4b2c",
-			displayPrefix: "om_live_fashiondoniya_7a4b2c••••••••",
+			id: "rkey_production_live",
+			projectId: "proj_production",
+			name: "Production API Key",
+			prefix: "om_live_prod_8f3a9e",
+			displayPrefix: "om_live_prod_8f3a9e••••••••",
 			keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			environment: "live",
 			status: "active",
@@ -334,6 +345,16 @@ const KV_STATE_KEY = "mailhub:state:v1";
 // In-memory memory singleton for fast local dev & edge caching
 let inMemoryState: MailHubState | null = null;
 let hasEnsuredStateTable = false;
+
+function normalizeSlugKey(val: string): string {
+	return val.trim().toLowerCase().replace(/^proj_/, "").replace(/[-_]/g, "");
+}
+
+function maskKeyValue(raw: string): string {
+	const trimmed = raw.trim();
+	if (trimmed.length <= 10) return "••••••••";
+	return `${trimmed.slice(0, 6)}••••••••${trimmed.slice(-4)}`;
+}
 
 async function ensureMailHubStateTable(env: MailHubEnv): Promise<void> {
 	if (!env.DB || hasEnsuredStateTable) return;
@@ -375,8 +396,8 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 	// 2. Try KV if D1 is not populated
 	if ((!state.projects || state.projects.length === 0) && env.KV) {
 		try {
-			const saved = await env.KV.get(KV_STATE_KEY, 'json');
-			if (saved && typeof saved === 'object' && (saved as any).projects) {
+			const saved = await env.KV.get(KV_STATE_KEY, "json");
+			if (saved && typeof saved === "object" && (saved as any).projects) {
 				state = saved as MailHubState;
 			}
 		} catch {
@@ -384,45 +405,351 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 		}
 	}
 
-	// 3. Ensure Fashion Doniya is present in state.projects if not in test environment
+	// 3. In non-test mode, ensure canonical Cloudflare provider & Fashion Doniya exist and reconcile with D1 MailHub tables
 	if (!isTestEnvironment()) {
+		if (!state.providers.some((p) => p.id === "cred_cloudflare_main" || p.provider === "cloudflare")) {
+			state.providers.unshift({
+				id: "cred_cloudflare_main",
+				provider: "cloudflare",
+				label: "Cloudflare Native Email",
+				dailyLimit: 10000,
+				costPerK: 0,
+				enabled: true,
+				configured: true,
+			});
+		}
+
 		const hasFashionDoniya = state.projects.some(
-			(p) => p.slug === "fashiondoniya" || p.id === "proj_fashiondoniya" || p.slug === "fashion-doniya"
+			(p) => normalizeSlugKey(p.slug || p.id) === "fashiondoniya"
 		);
 		if (!hasFashionDoniya) {
 			const fdProject: MailHubProject = {
-				id: "proj_fashiondoniya",
+				id: "proj_fashion-doniya",
 				name: "Fashion Doniya",
-				slug: "fashiondoniya",
+				slug: "fashion-doniya",
 				description: "Fashion Doniya e-commerce transactional & notification routing",
 				status: "active",
-				providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+				providerOrder: ["cred_cloudflare_main", "cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
 				createdAt: "2026-11-01T00:00:00.000Z",
 				updatedAt: "2026-11-01T00:00:00.000Z",
 			};
-			state.projects.push(fdProject);
+			state.projects.unshift(fdProject);
 			state.allocations.push(
-				{ projectId: "proj_fashiondoniya", providerId: "cred_brevo_main", dailySlice: 150, priority: 1, usedToday: 0 },
-				{ projectId: "proj_fashiondoniya", providerId: "cred_resend_main", dailySlice: 50, priority: 2, usedToday: 0 },
-				{ projectId: "proj_fashiondoniya", providerId: "cred_ses_backup", dailySlice: 5000, priority: 3, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_cloudflare_main", dailySlice: 10000, priority: 1, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_brevo_main", dailySlice: 0, priority: 2, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_resend_main", dailySlice: 0, priority: 3, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_ses_backup", dailySlice: 0, priority: 4, usedToday: 0 },
 			);
 			state.keys.push({
-				id: "rkey_fashiondoniya_live",
-				projectId: "proj_fashiondoniya",
+				id: "rkey_fashion_doniya_live",
+				projectId: "proj_fashion-doniya",
 				name: "Fashion Doniya Live Key",
-				prefix: "om_live_fashiondoniya_7a4b2c",
-				displayPrefix: "om_live_fashiondoniya_7a4b2c••••••••",
-				keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				prefix: "om_live_fashion-doniya_1386a2",
+				displayPrefix: "om_live_fashion-doniya_1386a2••••••••",
+				keyHash: "399268ea955517bbc587f1b9fc6ad10a7d65bd22228aa851569be878f23af886",
 				environment: "live",
 				status: "active",
 				createdAt: "2026-11-01T00:00:00.000Z",
 				lastUsedAt: null,
 			});
 		}
+
+		// Reconcile against authoritative D1 MailHub tables if present
+		if (env.DB) {
+			// 3a. Sync projects table
+			try {
+				const projRes = await env.DB.prepare(
+					"SELECT id, name, slug, description, status, created_at, updated_at FROM projects"
+				).all();
+				if (projRes?.results && projRes.results.length > 0) {
+					for (const r of projRes.results as any[]) {
+						const rowId = String(r.id);
+						const rowSlug = String(r.slug || rowId.replace(/^proj_/, ""));
+						const rowNorm = normalizeSlugKey(rowSlug || rowId);
+						const existing = state.projects.find(
+							(p) => p.id === rowId || normalizeSlugKey(p.slug || p.id) === rowNorm
+						);
+						if (existing) {
+							if (existing.id !== rowId) {
+								for (const alloc of state.allocations) {
+									if (normalizeSlugKey(alloc.projectId) === rowNorm) {
+										alloc.projectId = rowId;
+									}
+								}
+								for (const key of state.keys) {
+									if (normalizeSlugKey(key.projectId) === rowNorm) {
+										key.projectId = rowId;
+									}
+								}
+							}
+							existing.id = rowId;
+							existing.name = String(r.name || existing.name);
+							existing.slug = rowSlug;
+							if (typeof r.description === "string") existing.description = r.description;
+							existing.status = (r.status as MailHubProject["status"]) || existing.status || "active";
+						} else {
+							const providerOrder = state.providers.filter((p) => p.enabled).map((p) => p.id);
+							state.projects.push({
+								id: rowId,
+								name: String(r.name || rowSlug),
+								slug: rowSlug,
+								description: typeof r.description === "string" ? r.description : "",
+								status: (r.status as MailHubProject["status"]) || "active",
+								providerOrder,
+								createdAt: r.created_at ? String(r.created_at) : new Date().toISOString(),
+								updatedAt: r.updated_at ? String(r.updated_at) : new Date().toISOString(),
+							});
+						}
+					}
+
+					// Deduplicate projects by normalized slug key, preserving D1-matched records
+					const dedupedProjects: MailHubProject[] = [];
+					const seenNorms = new Set<string>();
+					for (const p of state.projects) {
+						const norm = normalizeSlugKey(p.slug || p.id);
+						if (!seenNorms.has(norm)) {
+							seenNorms.add(norm);
+							dedupedProjects.push(p);
+						}
+					}
+					state.projects = dedupedProjects;
+				}
+			} catch {
+				// projects table may not exist on local/fresh schemas
+			}
+
+			// 3b. Sync provider_credentials table
+			try {
+				const credRes = await env.DB.prepare(
+					"SELECT id, provider, label, credentials_encrypted, daily_limit, cost_per_k, enabled FROM provider_credentials"
+				).all();
+				if (credRes?.results && credRes.results.length > 0) {
+					for (const c of credRes.results as any[]) {
+						const credId = String(c.id);
+						const providerType = String(c.provider).toLowerCase();
+						let parsedCreds: Record<string, any> = {};
+						if (c.credentials_encrypted) {
+							try {
+								const raw = typeof c.credentials_encrypted === "string"
+									? JSON.parse(c.credentials_encrypted)
+									: c.credentials_encrypted;
+								if (raw && typeof raw === "object") parsedCreds = raw;
+								else if (typeof raw === "string" && raw.trim()) parsedCreds = { apiKey: raw.trim() };
+							} catch {
+								if (typeof c.credentials_encrypted === "string" && c.credentials_encrypted.trim()) {
+									parsedCreds = { apiKey: c.credentials_encrypted.trim() };
+								}
+							}
+						}
+						const rawKey = String(
+							parsedCreds.apiKey || parsedCreds.sendMailToken || parsedCreds.accessKeyId || ""
+						).trim();
+
+						const existing = state.providers.find(
+							(p) => p.id === credId || p.provider.toLowerCase() === providerType
+						);
+						if (existing) {
+							existing.label = c.label || existing.label;
+							if (typeof c.daily_limit === "number" && c.daily_limit > 0) existing.dailyLimit = c.daily_limit;
+							if (typeof c.cost_per_k === "number") existing.costPerK = c.cost_per_k;
+							if (c.enabled !== undefined && c.enabled !== null) existing.enabled = Boolean(c.enabled);
+							if (rawKey) {
+								existing.configured = true;
+								existing.apiKeyEnc = rawKey;
+								existing.apiKeyMasked = maskKeyValue(rawKey);
+							}
+							if (parsedCreds.secretAccessKey) (existing as any).secretKey = parsedCreds.secretAccessKey;
+							if (parsedCreds.region) existing.region = parsedCreds.region;
+							if (parsedCreds.bounceAddress) existing.bounceAddress = parsedCreds.bounceAddress;
+							if (providerType === "cloudflare") existing.configured = true;
+						} else {
+							state.providers.push({
+								id: credId,
+								provider: providerType,
+								label: c.label || providerType,
+								dailyLimit: Number(c.daily_limit ?? 10000),
+								costPerK: Number(c.cost_per_k ?? 0),
+								enabled: Boolean(c.enabled ?? 1),
+								configured: Boolean(rawKey || providerType === "cloudflare"),
+								...(rawKey ? { apiKeyEnc: rawKey, apiKeyMasked: maskKeyValue(rawKey) } : {}),
+								...(parsedCreds.region ? { region: parsedCreds.region } : {}),
+								...(parsedCreds.bounceAddress ? { bounceAddress: parsedCreds.bounceAddress } : {}),
+							});
+						}
+					}
+				}
+			} catch {
+				// provider_credentials table may not exist
+			}
+
+			// 3c. Sync app_settings & worker env credentials into provider state
+			try {
+				const settingsRow = await env.DB.prepare(
+					"SELECT resend_api_key, aws_config FROM app_settings WHERE id = 'default' LIMIT 1"
+				).first();
+				if (settingsRow?.resend_api_key) {
+					const resendProv = state.providers.find((p) => p.provider.toLowerCase() === "resend");
+					if (resendProv) {
+						const keyStr = String(settingsRow.resend_api_key).trim();
+						if (keyStr) {
+							resendProv.configured = true;
+							resendProv.enabled = true;
+							resendProv.apiKeyEnc = resendProv.apiKeyEnc || keyStr;
+							resendProv.apiKeyMasked = resendProv.apiKeyMasked || maskKeyValue(keyStr);
+						}
+					}
+				}
+				if (settingsRow?.aws_config) {
+					try {
+						const awsCfg = typeof settingsRow.aws_config === "string"
+							? JSON.parse(settingsRow.aws_config)
+							: settingsRow.aws_config;
+						const sesProv = state.providers.find((p) => p.provider.toLowerCase() === "ses");
+						if (sesProv && awsCfg?.accessKeyId && awsCfg?.secretAccessKey) {
+							sesProv.configured = true;
+							sesProv.enabled = true;
+							sesProv.apiKeyEnc = sesProv.apiKeyEnc || String(awsCfg.accessKeyId);
+							sesProv.apiKeyMasked = sesProv.apiKeyMasked || maskKeyValue(String(awsCfg.accessKeyId));
+							(sesProv as any).secretKey = (sesProv as any).secretKey || String(awsCfg.secretAccessKey);
+							if (awsCfg.region) sesProv.region = String(awsCfg.region);
+						}
+					} catch {
+						// ignore invalid aws_config JSON
+					}
+				}
+			} catch {
+				// app_settings query best-effort
+			}
+
+			// 3d. Sync project_routing_keys table
+			try {
+				const keyRes = await env.DB.prepare(
+					"SELECT id, project_id, name, prefix, key_hash, environment, status, created_at, last_used_at FROM project_routing_keys"
+				).all();
+				if (keyRes?.results && keyRes.results.length > 0) {
+					const MOCK_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+					const syncedProjNorms = new Set<string>();
+					for (const rk of keyRes.results as any[]) {
+						const keyId = String(rk.id);
+						const projId = String(rk.project_id);
+						const projNorm = normalizeSlugKey(projId);
+						syncedProjNorms.add(projNorm);
+						const prefix = String(rk.prefix || "");
+						const displayPrefix = prefix.includes("••") ? prefix : `${prefix}••••••••`;
+
+						const existing = state.keys.find(
+							(k) => k.id === keyId || (rk.key_hash && k.keyHash === rk.key_hash)
+						);
+						if (existing) {
+							existing.projectId = projId;
+							existing.name = String(rk.name || existing.name);
+							existing.prefix = prefix;
+							existing.displayPrefix = displayPrefix;
+							existing.keyHash = String(rk.key_hash || existing.keyHash);
+							existing.environment = rk.environment === "test" ? "test" : "live";
+							existing.status = rk.status === "revoked" ? "revoked" : "active";
+							if (rk.last_used_at) existing.lastUsedAt = String(rk.last_used_at);
+						} else {
+							state.keys.push({
+								id: keyId,
+								projectId: projId,
+								name: String(rk.name || "Live Key"),
+								prefix,
+								displayPrefix,
+								keyHash: String(rk.key_hash || ""),
+								environment: rk.environment === "test" ? "test" : "live",
+								status: rk.status === "revoked" ? "revoked" : "active",
+								createdAt: rk.created_at ? String(rk.created_at) : new Date().toISOString(),
+								lastUsedAt: rk.last_used_at ? String(rk.last_used_at) : null,
+							});
+						}
+					}
+
+					// Drop placeholder keys on projects that now have real D1 routing keys
+					state.keys = state.keys.filter((k) => {
+						const pNorm = normalizeSlugKey(k.projectId);
+						if (!syncedProjNorms.has(pNorm)) return true;
+						return k.keyHash !== MOCK_HASH;
+					});
+				}
+			} catch {
+				// project_routing_keys table may not exist
+			}
+
+			// 3e. Sync project_provider_allocations table
+			try {
+				const allocRes = await env.DB.prepare(
+					"SELECT project_id, provider_cred_id, daily_slice, priority FROM project_provider_allocations ORDER BY priority ASC"
+				).all();
+				if (allocRes?.results && allocRes.results.length > 0) {
+					const dbOrderByProj = new Map<string, string[]>();
+					for (const a of allocRes.results as any[]) {
+						const projId = String(a.project_id);
+						const projNorm = normalizeSlugKey(projId);
+						const credId = String(a.provider_cred_id);
+						const slice = Number(a.daily_slice ?? 0);
+						const prio = Number(a.priority ?? 1);
+
+						const existing = state.allocations.find(
+							(al) => normalizeSlugKey(al.projectId) === projNorm && al.providerId === credId
+						);
+						if (existing) {
+							existing.projectId = projId;
+							existing.dailySlice = slice;
+							existing.priority = prio;
+						} else {
+							state.allocations.push({
+								projectId: projId,
+								providerId: credId,
+								dailySlice: slice,
+								priority: prio,
+								usedToday: 0,
+							});
+						}
+
+						const list = dbOrderByProj.get(projNorm) ?? [];
+						if (!list.includes(credId)) list.push(credId);
+						dbOrderByProj.set(projNorm, list);
+					}
+
+					for (const proj of state.projects) {
+						const norm = normalizeSlugKey(proj.id || proj.slug);
+						const d1Order = dbOrderByProj.get(norm);
+						if (d1Order && d1Order.length > 0) {
+							const rest = proj.providerOrder.filter((id) => !d1Order.includes(id));
+							proj.providerOrder = [...d1Order, ...rest];
+						}
+					}
+				}
+			} catch {
+				// project_provider_allocations table may not exist
+			}
+		}
+
+		// Reflect worker environment secrets/bindings in provider configured state
+		const envAny = env as Record<string, any>;
+		const processEnv = (typeof process !== "undefined" && process.env ? process.env : {}) as Record<
+			string,
+			string | undefined
+		>;
+		for (const prov of state.providers) {
+			const pType = prov.provider.toLowerCase();
+			if (pType === "brevo" && (envAny.BREVO_API_KEY || processEnv.BREVO_API_KEY || prov.apiKeyEnc)) {
+				prov.configured = true;
+			} else if (pType === "resend" && (envAny.RESEND_API_KEY || processEnv.RESEND_API_KEY || prov.apiKeyEnc)) {
+				prov.configured = true;
+			} else if ((pType === "zepto" || pType === "zeptomail") && (envAny.ZEPTOMAIL_API_KEY || envAny.ZEPTO_API_KEY || prov.apiKeyEnc)) {
+				prov.configured = true;
+			} else if (pType === "ses" && ((envAny.AWS_ACCESS_KEY_ID && envAny.AWS_SECRET_ACCESS_KEY) || prov.apiKeyEnc)) {
+				prov.configured = true;
+			} else if (pType === "cloudflare" && envAny.EMAIL) {
+				prov.configured = true;
+			}
+		}
 	}
 
 	// 4. Auto-reconcile with distinct project IDs from send logs so any project
-	// dispatched via SDK/API (like fashiondoniya) is permanently registered and visible.
+	// dispatched via SDK/API is permanently registered and visible.
 	if (env.DB) {
 		try {
 			const candidateTables = ["email_router_send_logs", "send_log"];
@@ -451,11 +778,14 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 				}
 				if (!cleanSlug) continue;
 				const expectedId = cleanSlug.startsWith("proj_") ? cleanSlug : `proj_${cleanSlug}`;
+				const rawNorm = normalizeSlugKey(rawId);
 
 				const exists = state.projects.some(
-					(p) => p.id.toLowerCase() === expectedId.toLowerCase() ||
-					       p.id.toLowerCase() === rawId.toLowerCase() ||
-					       p.slug.toLowerCase() === cleanSlug.toLowerCase()
+					(p) =>
+						p.id.toLowerCase() === expectedId.toLowerCase() ||
+						p.id.toLowerCase() === rawId.toLowerCase() ||
+						p.slug.toLowerCase() === cleanSlug.toLowerCase() ||
+						normalizeSlugKey(p.slug || p.id) === rawNorm
 				);
 
 				if (!exists) {
@@ -463,7 +793,7 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 					const displayName = rawName
 						.split(/\s+/)
 						.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-						.join(" ") || "Fashion Doniya";
+						.join(" ") || "Project";
 
 					const providerOrder = state.providers.filter((p) => p.enabled).map((p) => p.id);
 					const newProject: MailHubProject = {
@@ -519,8 +849,11 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 		const liveUsage = await getAllQuotaUsage(env as any);
 		if (liveUsage && Object.keys(liveUsage).length > 0) {
 			for (const alloc of state.allocations) {
-				const projectLive = liveUsage[alloc.projectId];
-				if (projectLive && typeof projectLive[alloc.providerId] === 'number') {
+				const allocNorm = normalizeSlugKey(alloc.projectId);
+				const projectLive =
+					liveUsage[alloc.projectId] ??
+					Object.entries(liveUsage).find(([k]) => normalizeSlugKey(k) === allocNorm)?.[1];
+				if (projectLive && typeof projectLive[alloc.providerId] === "number") {
 					alloc.usedToday = projectLive[alloc.providerId];
 				}
 			}
@@ -573,6 +906,31 @@ export async function saveMailHubState(env: MailHubEnv, state: MailHubState): Pr
 	}
 }
 
+async function syncAllocationRowToD1(
+	env: MailHubEnv,
+	projectId: string,
+	providerCredId: string,
+	dailySlice: number,
+	priority: number
+): Promise<void> {
+	if (!env.DB) return;
+	try {
+		const nowIso = new Date().toISOString().slice(0, 19).replace("T", " ");
+		const upd = await env.DB.prepare(
+			"UPDATE project_provider_allocations SET daily_slice = ?, priority = ?, updated_at = ? WHERE project_id = ? AND provider_cred_id = ?"
+		).bind(dailySlice, priority, nowIso, projectId, providerCredId).run();
+		const changes = Number((upd as any)?.meta?.changes ?? (upd as any)?.changes ?? 0);
+		if (changes === 0) {
+			const allocId = `alloc_${nanoid(10)}`;
+			await env.DB.prepare(
+				"INSERT INTO project_provider_allocations (id, project_id, provider_cred_id, daily_slice, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+			).bind(allocId, projectId, providerCredId, dailySlice, priority, nowIso, nowIso).run();
+		}
+	} catch {
+		// Table may not exist in minimal unit-test schemas
+	}
+}
+
 /**
  * Update quota slices for a provider, validating sum(slices) <= providerLimit.
  */
@@ -599,18 +957,21 @@ export async function updateProviderSlices(
 
 	// Apply slices
 	for (const s of slices) {
+		const normalizedSlice = Math.max(0, Math.floor(s.dailySlice));
 		const existing = state.allocations.find((a) => a.providerId === providerId && a.projectId === s.projectId);
+		const priority = existing?.priority ?? 1;
 		if (existing) {
-			existing.dailySlice = Math.max(0, Math.floor(s.dailySlice));
+			existing.dailySlice = normalizedSlice;
 		} else {
 			state.allocations.push({
 				projectId: s.projectId,
 				providerId,
-				dailySlice: Math.max(0, Math.floor(s.dailySlice)),
-				priority: 1,
+				dailySlice: normalizedSlice,
+				priority,
 				usedToday: 0,
 			});
 		}
+		await syncAllocationRowToD1(env, s.projectId, providerId, normalizedSlice, priority);
 	}
 
 	await saveMailHubState(env, state);
@@ -635,12 +996,14 @@ export async function updateProjectFallbackOrder(
 	project.updatedAt = new Date().toISOString();
 
 	// Update priority index on allocations
-	providerOrder.forEach((provId, index) => {
+	for (let index = 0; index < providerOrder.length; index++) {
+		const provId = providerOrder[index];
 		const alloc = state.allocations.find((a) => a.projectId === projectId && a.providerId === provId);
 		if (alloc) {
 			alloc.priority = index + 1;
+			await syncAllocationRowToD1(env, projectId, provId, alloc.dailySlice, alloc.priority);
 		}
-	});
+	}
 
 	await saveMailHubState(env, state);
 	return { success: true };
@@ -663,6 +1026,7 @@ export async function createProject(
 	}
 
 	const providerOrder = state.providers.filter((p) => p.enabled).map((p) => p.id);
+	const nowIso = new Date().toISOString();
 
 	const project: MailHubProject = {
 		id,
@@ -671,21 +1035,37 @@ export async function createProject(
 		description: data.description?.trim() || "",
 		status: "active",
 		providerOrder,
-		createdAt: new Date().toISOString(),
-		updatedAt: new Date().toISOString(),
+		createdAt: nowIso,
+		updatedAt: nowIso,
 	};
 
 	state.projects.push(project);
 
-	// Create default allocations (e.g. 0 slice or reasonable initial balance)
+	if (env.DB) {
+		try {
+			const dbNow = nowIso.slice(0, 19).replace("T", " ");
+			await env.DB.prepare(
+				"INSERT INTO projects (id, name, slug, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?)"
+			).bind(id, project.name, project.slug, project.description, dbNow, dbNow).run();
+		} catch {
+			// Best-effort D1 sync
+		}
+	}
+
+	// Create default allocations
 	for (const prov of state.providers) {
+		const slice = prov.dailyLimit > 1000 ? 5000 : 0;
+		const priority = providerOrder.indexOf(prov.id) + 1 || 1;
 		state.allocations.push({
 			projectId: id,
 			providerId: prov.id,
-			dailySlice: prov.dailyLimit > 1000 ? 5000 : 0,
-			priority: providerOrder.indexOf(prov.id) + 1 || 1,
+			dailySlice: slice,
+			priority,
 			usedToday: 0,
 		});
+		if (prov.enabled && slice > 0) {
+			await syncAllocationRowToD1(env, id, prov.id, slice, priority);
+		}
 	}
 
 	// Generate initial live routing key
@@ -704,6 +1084,18 @@ export async function createProject(
 	};
 
 	state.keys.push(routingKey);
+
+	if (env.DB) {
+		try {
+			const dbNow = keyGen.createdAt.toISOString().slice(0, 19).replace("T", " ");
+			await env.DB.prepare(
+				"INSERT INTO project_routing_keys (id, project_id, name, prefix, key_hash, environment, status, rate_limit_rps, created_at) VALUES (?, ?, ?, ?, ?, 'live', 'active', 60, ?)"
+			).bind(routingKey.id, id, routingKey.name, routingKey.prefix, routingKey.keyHash, dbNow).run();
+		} catch {
+			// Best-effort D1 sync
+		}
+	}
+
 	await saveMailHubState(env, state);
 
 	return { project, key: keyGen.fullKey };
@@ -739,6 +1131,18 @@ export async function createRoutingKey(
 	};
 
 	state.keys.push(routingKey);
+
+	if (env.DB) {
+		try {
+			const dbNow = keyGen.createdAt.toISOString().slice(0, 19).replace("T", " ");
+			await env.DB.prepare(
+				"INSERT INTO project_routing_keys (id, project_id, name, prefix, key_hash, environment, status, rate_limit_rps, created_at) VALUES (?, ?, ?, ?, ?, ?, 'active', 60, ?)"
+			).bind(routingKey.id, project.id, routingKey.name, routingKey.prefix, routingKey.keyHash, environment, dbNow).run();
+		} catch {
+			// Best-effort D1 sync
+		}
+	}
+
 	await saveMailHubState(env, state);
 
 	return { routingKey, fullKey: keyGen.fullKey };
@@ -753,6 +1157,17 @@ export async function revokeRoutingKey(env: MailHubEnv, keyId: string): Promise<
 	if (!key) return false;
 
 	key.status = "revoked";
+
+	if (env.DB) {
+		try {
+			await env.DB.prepare(
+				"UPDATE project_routing_keys SET status = 'revoked' WHERE id = ?"
+			).bind(keyId).run();
+		} catch {
+			// Best-effort D1 sync
+		}
+	}
+
 	await saveMailHubState(env, state);
 	return true;
 }
@@ -780,7 +1195,55 @@ export async function updateProviderConfig(
 	if (updates.apiKey && updates.apiKey.trim().length > 0) {
 		const raw = updates.apiKey.trim();
 		provider.configured = true;
-		provider.apiKeyMasked = `${raw.slice(0, 6)}••••••••${raw.slice(-4)}`;
+		provider.apiKeyEnc = raw;
+		(provider as any).apiKey = raw;
+		provider.apiKeyMasked = maskKeyValue(raw);
+	}
+
+	if (updates.secretKey && updates.secretKey.trim().length > 0) {
+		(provider as any).secretKey = updates.secretKey.trim();
+	}
+
+	if (env.DB) {
+		try {
+			const credsPayload: Record<string, string> = {};
+			if (provider.apiKeyEnc) {
+				if (provider.provider === "ses") credsPayload.accessKeyId = provider.apiKeyEnc;
+				else if (provider.provider === "zepto" || provider.provider === "zeptomail") credsPayload.sendMailToken = provider.apiKeyEnc;
+				else credsPayload.apiKey = provider.apiKeyEnc;
+			}
+			if ((provider as any).secretKey) credsPayload.secretAccessKey = (provider as any).secretKey;
+			if (provider.region) credsPayload.region = provider.region;
+			if (provider.bounceAddress) credsPayload.bounceAddress = provider.bounceAddress;
+
+			const credsJson = JSON.stringify(credsPayload);
+			const upd = await env.DB.prepare(
+				"UPDATE provider_credentials SET label = ?, credentials_encrypted = ?, daily_limit = ?, cost_per_k = ?, enabled = ? WHERE id = ?"
+			).bind(
+				provider.label || provider.provider,
+				credsJson,
+				provider.dailyLimit,
+				provider.costPerK,
+				provider.enabled ? 1 : 0,
+				provider.id
+			).run();
+			const changes = Number((upd as any)?.meta?.changes ?? (upd as any)?.changes ?? 0);
+			if (changes === 0) {
+				await env.DB.prepare(
+					"INSERT INTO provider_credentials (id, provider, label, credentials_encrypted, daily_limit, cost_per_k, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)"
+				).bind(
+					provider.id,
+					provider.provider,
+					provider.label || provider.provider,
+					credsJson,
+					provider.dailyLimit,
+					provider.costPerK,
+					provider.enabled ? 1 : 0
+				).run();
+			}
+		} catch {
+			// Best-effort D1 sync
+		}
 	}
 
 	await saveMailHubState(env, state);

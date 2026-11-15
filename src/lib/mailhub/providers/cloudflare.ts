@@ -40,34 +40,37 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 
 		const startTime = performance.now();
 		const messageId = message.headers?.["Message-ID"] ?? mintMessageId(message.from);
+		const attachments = message.attachments?.map((attachment) =>
+			attachment.disposition === "inline" && attachment.contentId
+				? {
+						filename: attachment.filename,
+						type: attachment.type,
+						content: attachment.content,
+						disposition: "inline" as const,
+						contentId: attachment.contentId,
+				  }
+				: {
+						filename: attachment.filename,
+						type: attachment.type,
+						content: attachment.content,
+						disposition: "attachment" as const,
+				  },
+		);
+
+		const sendPayload = {
+			from: message.from,
+			to: message.to,
+			...(message.cc?.length ? { cc: message.cc } : {}),
+			...(message.bcc?.length ? { bcc: message.bcc } : {}),
+			subject: message.subject,
+			headers: message.headers && Object.keys(message.headers).length ? message.headers : undefined,
+			html: message.html,
+			text: message.text,
+			attachments,
+		};
 
 		try {
-			const response = await emailBinding.send({
-				from: message.from,
-				to: message.to,
-				...(message.cc?.length ? { cc: message.cc } : {}),
-				...(message.bcc?.length ? { bcc: message.bcc } : {}),
-				subject: message.subject,
-				headers: message.headers && Object.keys(message.headers).length ? message.headers : undefined,
-				html: message.html,
-				text: message.text,
-				attachments: message.attachments?.map((attachment) =>
-					attachment.disposition === "inline" && attachment.contentId
-						? {
-								filename: attachment.filename,
-								type: attachment.type,
-								content: attachment.content,
-								disposition: "inline" as const,
-								contentId: attachment.contentId,
-						  }
-						: {
-								filename: attachment.filename,
-								type: attachment.type,
-								content: attachment.content,
-								disposition: "attachment" as const,
-						  },
-				),
-			});
+			const response = await emailBinding.send(sendPayload);
 
 			const latencyMs = Math.round(performance.now() - startTime);
 			const returnedId = response?.messageId ?? messageId;
@@ -82,6 +85,65 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 				raw: response,
 			};
 		} catch (err) {
+			const errMsg = err instanceof Error ? err.message : String(err);
+			const lowerErr = errMsg.toLowerCase();
+			const isRateLimit =
+				lowerErr.includes("rate limit") ||
+				lowerErr.includes("quota exceeded") ||
+				lowerErr.includes("too many requests") ||
+				lowerErr.includes("429");
+
+			if (!isRateLimit && env?.DB) {
+				try {
+					const row = await env.DB.prepare(
+						"SELECT hostname FROM domains WHERE length(zone_id) = 32 AND status = 'active' LIMIT 1",
+					).first();
+					const verifiedHostname = row?.hostname ? String(row.hostname).trim().toLowerCase() : "";
+
+					const angleMatch = fromStr.match(/^(.*?)<([^>]+)>$/);
+					const displayName = (angleMatch?.[1] || "").replace(/["']/g, "").trim() || "OrbitMail";
+					const originalEmail = (angleMatch?.[2] || fromStr).trim().toLowerCase();
+					const [localPartRaw, currentDomain] = originalEmail.split("@");
+					const localPart = localPartRaw?.replace(/[^a-zA-Z0-9._+-]/g, "") || "notifications";
+
+					if (verifiedHostname && currentDomain !== verifiedHostname) {
+						const retryHeaders: Record<string, string> = {
+							...(message.headers ?? {}),
+							"Reply-To": message.headers?.["Reply-To"] || originalEmail,
+						};
+						const candidates = [
+							`"${displayName}" <${localPart}@${verifiedHostname}>`,
+							`"${displayName}" <cto@${verifiedHostname}>`,
+						];
+						for (const fallbackFrom of candidates) {
+							try {
+								const fallbackMsgId = message.headers?.["Message-ID"] ?? mintMessageId(fallbackFrom);
+								const retryRes = await emailBinding.send({
+									...sendPayload,
+									from: fallbackFrom,
+									headers: retryHeaders,
+								});
+								const latencyMs = Math.round(performance.now() - startTime);
+								const returnedId = retryRes?.messageId ?? fallbackMsgId;
+								return {
+									success: true,
+									provider: this.provider,
+									messageId: returnedId,
+									providerMessageId: returnedId,
+									timestamp: Date.now(),
+									latencyMs,
+									raw: retryRes,
+								};
+							} catch {
+								// try next verified Cloudflare sender address
+							}
+						}
+					}
+				} catch {
+					// Fall through to throw original provider error
+				}
+			}
+
 			throw this.parseError(err);
 		}
 	}

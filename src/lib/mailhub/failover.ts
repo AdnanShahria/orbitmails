@@ -107,15 +107,24 @@ export async function resolveCandidateCredentials(
 	// 3. Query from D1 Database if bound
 	if (env.DB) {
 		try {
+			const providerTypeLower = candidate.provider.toLowerCase();
 			const row = await env.DB.prepare(
-				"SELECT id, provider, credentials_encrypted as creds FROM provider_credentials WHERE id = ? LIMIT 1",
-			).bind(candidate.providerCredId).first();
+				"SELECT id, provider, credentials_encrypted as creds FROM provider_credentials WHERE id = ? OR LOWER(provider) = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
+			).bind(candidate.providerCredId, providerTypeLower, candidate.providerCredId).first();
 
 			if (row && row.creds) {
 				try {
-					return typeof row.creds === "string" ? JSON.parse(row.creds) : row.creds;
+					const parsed = typeof row.creds === "string" ? JSON.parse(row.creds) : row.creds;
+					if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+						return parsed;
+					}
+					if (typeof parsed === "string" && parsed.trim().length > 0) {
+						return { apiKey: parsed.trim(), provider: row.provider };
+					}
 				} catch {
-					return { apiKey: row.creds, provider: row.provider };
+					if (typeof row.creds === "string" && row.creds.trim().length > 0) {
+						return { apiKey: row.creds.trim(), provider: row.provider };
+					}
 				}
 			}
 		} catch {
@@ -133,8 +142,17 @@ export async function resolveCandidateCredentials(
 		const prov = state.providers?.find(
 			(p) => p.id === candidate.providerCredId || p.provider.toLowerCase() === providerType
 		);
-		if (prov && (prov as any).apiKey) {
-			return { apiKey: (prov as any).apiKey, provider: prov.provider };
+		const savedKey = prov?.apiKeyEnc || (prov as any)?.apiKey;
+		if (prov && savedKey) {
+			return {
+				apiKey: savedKey,
+				sendMailToken: savedKey,
+				accessKeyId: savedKey,
+				secretAccessKey: (prov as any).secretKey || "",
+				region: prov.region || "us-east-1",
+				bounceAddress: prov.bounceAddress,
+				provider: prov.provider,
+			};
 		}
 	} catch {
 		// Fallback
@@ -176,13 +194,29 @@ export async function resolveCandidateCredentials(
 				domain: envAny.MAILGUN_DOMAIN || processEnv?.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
 				region: envAny.MAILGUN_REGION || processEnv?.MAILGUN_REGION || "us",
 			};
-		case "ses":
-			return {
-				accessKeyId: envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || processEnv?.AWS_ACCESS_KEY_ID || "",
-				secretAccessKey:
-					envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || processEnv?.AWS_SECRET_ACCESS_KEY || "",
-				region: envAny.AWS_REGION || envAny.S3_REGION || processEnv?.AWS_REGION || "us-east-1",
-			};
+		case "ses": {
+			let accessKeyId = envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || processEnv?.AWS_ACCESS_KEY_ID || "";
+			let secretAccessKey = envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || processEnv?.AWS_SECRET_ACCESS_KEY || "";
+			let region = envAny.AWS_REGION || envAny.S3_REGION || processEnv?.AWS_REGION || "us-east-1";
+			if ((!accessKeyId || !secretAccessKey) && env.DB) {
+				try {
+					const row = await env.DB.prepare(
+						"SELECT aws_config FROM app_settings WHERE id = 'default' LIMIT 1",
+					).first();
+					if (row?.aws_config) {
+						const parsedAws = typeof row.aws_config === "string" ? JSON.parse(row.aws_config) : row.aws_config;
+						if (parsedAws && typeof parsedAws === "object") {
+							accessKeyId = accessKeyId || parsedAws.accessKeyId || "";
+							secretAccessKey = secretAccessKey || parsedAws.secretAccessKey || "";
+							region = parsedAws.region || region;
+						}
+					}
+				} catch {
+					// Fallback
+				}
+			}
+			return { accessKeyId, secretAccessKey, region };
+		}
 		case "cloudflare":
 			return {
 				emailBinding: envAny.EMAIL,

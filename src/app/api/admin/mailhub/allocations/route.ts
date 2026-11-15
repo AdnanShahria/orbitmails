@@ -60,17 +60,18 @@ export async function GET(request: Request) {
 					if (usageRows?.results && usageRows.results.length > 0) {
 						for (const row of usageRows.results as any[]) {
 							const rProj = String(row.project_id || "").toLowerCase();
+							const rClean = rProj.replace(/^proj_/, "").replace(/[-_]/g, "");
 							const rProv = String(row.provider || "").toLowerCase();
 							const rCred = String(row.provider_cred_id || "").toLowerCase();
 							const count = Number(row.count || 0);
 
 							for (const alloc of state.allocations) {
 								const aProj = alloc.projectId.toLowerCase();
-								const aClean = aProj.replace(/^proj_/, "");
+								const aClean = aProj.replace(/^proj_/, "").replace(/[-_]/g, "");
 								const aProv = alloc.providerId.toLowerCase();
 
 								if (
-									(aProj === rProj || aClean === rProj.replace(/^proj_/, "")) &&
+									(aProj === rProj || aClean === rClean) &&
 									(aProv === rCred || aProv === rProv || aProv.includes(rProv))
 								) {
 									alloc.usedToday = Math.max(alloc.usedToday, count);

@@ -426,8 +426,12 @@ export async function sendSingleNormalizedMessage(
 		}
 
 		// Record failure log
+		const lastAttempt = failoverResult.failedAttempts?.[failoverResult.failedAttempts.length - 1];
+		const failureDetail = lastAttempt?.message
+			? `Email delivery failed (${lastAttempt.provider}): ${lastAttempt.message}`
+			: failoverResult.message || "Email delivery failed across all candidate providers";
+
 		try {
-			const lastAttempt = failoverResult.failedAttempts?.[failoverResult.failedAttempts.length - 1];
 			const logEntry = createSendLogEntry({
 				projectId: auth.projectId,
 				providerCredId: lastAttempt?.providerCredId || "all_failed",
@@ -436,26 +440,16 @@ export async function sendSingleNormalizedMessage(
 				subject: payload.subject,
 				htmlSnippet: payload.html ? payload.html.slice(0, 1500) : null,
 				textContent: payload.text ? payload.text.slice(0, 1000) : null,
-				status: failoverResult.queued ? "queued" : "failed",
-				errorMessage: failoverResult.message || "Delivery failed across all providers",
+				status: "failed",
+				errorMessage: lastAttempt?.message || failoverResult.message || "Delivery failed across all providers",
 				latencyMs: 0,
 				sentAt: Date.now(),
 			});
 			await flushBatchToD1([logEntry], env as any);
 		} catch {}
 
-		if ((failoverResult as any).queued) {
-			return {
-				id: failoverResult.deliveryId || newId("msg"),
-				messageId: failoverResult.deliveryId || newId("msg"),
-			};
-		}
-
-		const errorMsg =
-			(failoverResult as any)?.message ||
-			"Email delivery failed across all candidate providers";
-		const error = new Error(errorMsg);
-		(error as any).statusCode = 500;
+		const error = new Error(failureDetail);
+		(error as any).statusCode = 502;
 		(error as any).name = "delivery_failed";
 		throw error;
 	}

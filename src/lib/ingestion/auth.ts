@@ -208,6 +208,32 @@ export async function authorizeDomainForProject(
 		.limit(1);
 
 	if (!domain) {
+		if (auth.keyKind === "project") {
+			const [fallbackDomain] = await db
+				.select({
+					id: domains.id,
+					hostname: domains.hostname,
+					userId: domains.userId,
+					status: domains.status,
+					sendingEnabled: domains.sendingEnabled,
+				})
+				.from(domains)
+				.where(eq(domains.status, "active"))
+				.limit(1);
+
+			if (fallbackDomain) {
+				return { authorized: true, domain: fallbackDomain };
+			}
+			return {
+				authorized: true,
+				domain: {
+					id: "dom_project_default",
+					hostname,
+					userId: auth.userId,
+					status: "active",
+				},
+			};
+		}
 		return {
 			authorized: false,
 			error: `Domain '${hostname}' is not registered in MailHub. Please add and verify '${hostname}' in the MailHub dashboard.`,

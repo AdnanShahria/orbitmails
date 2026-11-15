@@ -41,9 +41,13 @@ function normalizeProviderId(providerStr?: string | null): ProviderId {
 	return "brevo";
 }
 
-function normalizeActivityStatus(statusStr?: string | null): ActivityStatus {
+function normalizeProjectLookupKey(value: string): string {
+	return value.toLowerCase().replace(/^proj_/, "").replace(/[-_]/g, "");
+}
+
+function normalizeActivityStatus(statusStr?: string | null, errorMessage?: string | null): ActivityStatus {
 	const s = (statusStr || "delivered").toLowerCase();
-	if (s === "failed" || s === "error") return "failed";
+	if (s === "failed" || s === "error" || s === "queued" || Boolean(errorMessage)) return "failed";
 	if (s === "bounced") return "bounced";
 	if (s === "sent") return "sent";
 	return "delivered";
@@ -62,10 +66,14 @@ export async function GET(request: Request) {
 		const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50", 10) || 50));
 
 		const state = await getMailHubState(access.env as any);
-		const projectMap = new Map(state.projects.map((p) => [p.id, p]));
-		// Also map project slugs for lookup
+		const projectMap = new Map<string, (typeof state.projects)[number]>();
 		for (const p of state.projects) {
+			projectMap.set(p.id, p);
 			projectMap.set(p.slug, p);
+			projectMap.set(p.id.toLowerCase(), p);
+			projectMap.set(p.slug.toLowerCase(), p);
+			projectMap.set(normalizeProjectLookupKey(p.id), p);
+			projectMap.set(normalizeProjectLookupKey(p.slug), p);
 		}
 
 		let rawRows: any[] = [];
@@ -79,8 +87,15 @@ export async function GET(request: Request) {
 					const params: any[] = [];
 
 					if (projectId) {
-						sql += ` AND (project_id = ? OR project_id = ?)`;
-						params.push(projectId, projectId.replace(/^proj_/, ""));
+						const cleanProjectId = projectId.replace(/^proj_/, "");
+						const strippedProjectId = normalizeProjectLookupKey(projectId);
+						sql += ` AND (LOWER(project_id) = ? OR LOWER(project_id) = ? OR REPLACE(REPLACE(LOWER(project_id), '-', ''), '_', '') IN (?, ?))`;
+						params.push(
+							projectId.toLowerCase(),
+							cleanProjectId.toLowerCase(),
+							strippedProjectId,
+							`proj${strippedProjectId}`
+						);
 					}
 					if (provider) {
 						sql += ` AND provider = ?`;
@@ -154,10 +169,13 @@ export async function GET(request: Request) {
 						process.env.NODE_ENV === "test"));
 
 			if (!isTestMode) {
-				return NextResponse.json({
-					success: true,
-					activities: [],
-				});
+				return NextResponse.json(
+					{
+						success: true,
+						activities: [],
+					},
+					{ headers: { "Cache-Control": "no-store" } }
+				);
 			}
 
 			let mockItems = [...INITIAL_ACTIVITIES];
@@ -192,7 +210,10 @@ export async function GET(request: Request) {
 		const activities: MailHubActivityItem[] = rawRows
 			.map((row: any) => {
 				const rowProjectId = String(row.project_id || row.projectId || "production");
-				const project = projectMap.get(rowProjectId);
+				const project =
+					projectMap.get(rowProjectId) ||
+					projectMap.get(rowProjectId.toLowerCase()) ||
+					projectMap.get(normalizeProjectLookupKey(rowProjectId));
 				const projectName = project ? project.name : rowProjectId.replace(/^proj_/, "").toUpperCase();
 				const projectSlug = project ? project.slug : rowProjectId.replace(/^proj_/, "");
 
@@ -202,16 +223,20 @@ export async function GET(request: Request) {
 				const latencyMs = Number(row.latency_ms ?? row.latencyMs ?? 150);
 				const toAddress = String(row.to_address || row.toAddress || row.recipient || "user@example.com");
 				const subject = String(row.subject || "(No Subject)");
+				const fallbackDomain = projectSlug.includes("fashion") ? "fashion-doniya.com" : "orbitsaas.cloud";
 				const fromAddress =
-					row.from_address || row.fromAddress || `notifications@${projectSlug}.internal`;
+					row.from_address || row.fromAddress || `notifications@${fallbackDomain}`;
 				const messageId =
 					row.provider_message_id ||
 					row.providerMessageId ||
 					row.messageId ||
 					`<${row.id || "msg"}@${projectSlug}.mailhub.internal>`;
 
-				const isFailed = row.status === "failed";
-				const activityStatus: ActivityStatus = normalizeActivityStatus(row.status);
+				const activityStatus: ActivityStatus = normalizeActivityStatus(
+					row.status,
+					row.error_message || row.errorMessage
+				);
+				const isFailed = activityStatus === "failed";
 
 				// Determine if this was a failover
 				const primaryProvider = project?.providerOrder?.[0]
@@ -289,10 +314,13 @@ export async function GET(request: Request) {
 			})
 			.slice(0, limit);
 
-		return NextResponse.json({
-			success: true,
-			activities,
-		});
+		return NextResponse.json(
+			{
+				success: true,
+				activities,
+			},
+			{ headers: { "Cache-Control": "no-store" } }
+		);
 	} catch (err: any) {
 		console.error("[GET /api/admin/mailhub/activities] Error:", err);
 		return NextResponse.json(

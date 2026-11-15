@@ -39,6 +39,7 @@ export class InProcessQueue {
 			this.timers.delete(timer);
 			void this.deliver(pending);
 		}, delayMs);
+		(timer as { unref?: () => void }).unref?.();
 		this.timers.add(timer);
 	}
 

@@ -191,25 +191,112 @@ export async function resolveProjectAllocations(
 			});
 	}
 
-	// 2. Query from MailHub state (D1 / KV / in-memory)
+	// 2. Query from D1 Database table first if bound (authoritative multi-tenant ledger)
+	const normalizeKey = (val: string) =>
+		val.trim().toLowerCase().replace(/^proj_/, "").replace(/[-_]/g, "");
+
+	if (env.DB) {
+		try {
+			const rawLower = projectId.trim().toLowerCase();
+			const cleanLower = rawLower.replace(/^proj_/, "");
+			const compact = cleanLower.replace(/[-_]/g, "");
+			const hyphenated = cleanLower.replace(/_/g, "-");
+			const underscored = cleanLower.replace(/-/g, "_");
+			const idVariants = Array.from(
+				new Set([
+					rawLower,
+					cleanLower,
+					`proj_${cleanLower}`,
+					compact,
+					`proj_${compact}`,
+					hyphenated,
+					`proj_${hyphenated}`,
+					underscored,
+					`proj_${underscored}`,
+				])
+			);
+			const placeholders = idVariants.map(() => "?").join(", ");
+
+			const query = `
+				SELECT 
+					a.project_id as projectId,
+					a.provider_cred_id as providerCredId,
+					a.daily_slice as dailySlice,
+					a.priority as priority,
+					c.id as credId,
+					c.provider as provider,
+					c.label as label,
+					c.credentials_encrypted as creds,
+					c.daily_limit as dailyLimit,
+					c.cost_per_k as costPerK,
+					c.enabled as enabled
+				FROM project_provider_allocations a
+				JOIN provider_credentials c ON a.provider_cred_id = c.id
+				WHERE LOWER(a.project_id) IN (${placeholders})
+				ORDER BY a.priority ASC
+			`;
+			const { results } = await env.DB.prepare(query).bind(...idVariants).all();
+			if (results && results.length > 0) {
+				return results.map((row: any) => {
+					let parsedCreds: Record<string, any> = {};
+					if (row.creds) {
+						try {
+							const p = typeof row.creds === "string" ? JSON.parse(row.creds) : row.creds;
+							if (p && typeof p === "object") parsedCreds = p;
+							else if (typeof p === "string" && p.trim()) parsedCreds = { apiKey: p.trim() };
+						} catch {
+							if (typeof row.creds === "string" && row.creds.trim()) parsedCreds = { apiKey: row.creds.trim() };
+						}
+					}
+					const extractedKey =
+						parsedCreds.apiKey || parsedCreds.sendMailToken || parsedCreds.accessKeyId || undefined;
+
+					return {
+						projectId: row.projectId,
+						providerCredId: row.providerCredId,
+						dailySlice: Number(row.dailySlice ?? 0),
+						priority: Number(row.priority ?? 1),
+						credential: {
+							id: row.credId,
+							provider: row.provider,
+							label: row.label,
+							...(extractedKey ? { apiKeyEnc: extractedKey } : {}),
+							...(parsedCreds.sendMailToken ? { sendMailToken: parsedCreds.sendMailToken } : {}),
+							...(parsedCreds.accessKeyId ? { accessKeyId: parsedCreds.accessKeyId } : {}),
+							...(parsedCreds.secretAccessKey ? { secretAccessKey: parsedCreds.secretAccessKey } : {}),
+							...(parsedCreds.region ? { region: parsedCreds.region } : {}),
+							...(parsedCreds.bounceAddress ? { bounceAddress: parsedCreds.bounceAddress } : {}),
+							dailyLimit: Number(row.dailyLimit ?? 0),
+							costPerK: Number(row.costPerK ?? 0),
+							enabled: Boolean(row.enabled ?? true),
+						},
+					};
+				});
+			}
+		} catch {
+			// Fall through to MailHub state fallback
+		}
+	}
+
+	// 3. Query from MailHub state (D1 mailhub_state / KV / in-memory)
 	try {
 		const state = await getMailHubState(env);
-		const cleanId = projectId.replace(/^proj_/, "").toLowerCase();
+		const targetNorm = normalizeKey(projectId);
 		const project = state.projects.find(
 			(p) =>
 				p.id.toLowerCase() === projectId.toLowerCase() ||
 				p.slug.toLowerCase() === projectId.toLowerCase() ||
-				p.slug.toLowerCase() === cleanId ||
-				p.id.toLowerCase() === `proj_${cleanId}`
+				normalizeKey(p.id) === targetNorm ||
+				normalizeKey(p.slug) === targetNorm
 		);
 
 		if (project) {
 			const effectiveProjId = project.id;
+			const projNorm = normalizeKey(effectiveProjId);
 			const projAllocations = state.allocations.filter(
 				(a) =>
 					a.projectId.toLowerCase() === effectiveProjId.toLowerCase() ||
-					a.projectId.toLowerCase() === project.slug.toLowerCase() ||
-					a.projectId.toLowerCase() === cleanId
+					normalizeKey(a.projectId) === projNorm
 			);
 
 			const result: Array<ProjectAllocation & { credential: ProviderCredential }> = [];
@@ -222,6 +309,7 @@ export async function resolveProjectAllocations(
 						project.providerOrder?.indexOf(provConfig.id) >= 0
 							? project.providerOrder.indexOf(provConfig.id) + 1
 							: alloc.priority || 1;
+					const storedKey = provConfig.apiKeyEnc || (provConfig as any).apiKey;
 
 					result.push({
 						projectId: effectiveProjId,
@@ -232,6 +320,9 @@ export async function resolveProjectAllocations(
 							id: provConfig.id,
 							provider: provConfig.provider,
 							label: provConfig.label || provConfig.provider,
+							...(storedKey ? { apiKeyEnc: storedKey } : {}),
+							...(provConfig.region ? { region: provConfig.region } : {}),
+							...(provConfig.bounceAddress ? { bounceAddress: provConfig.bounceAddress } : {}),
 							dailyLimit: provConfig.dailyLimit,
 							costPerK: provConfig.costPerK,
 							enabled: provConfig.enabled,
@@ -249,49 +340,7 @@ export async function resolveProjectAllocations(
 		console.warn("[MailHub Router] Failed to resolve allocations from state:", stateErr);
 	}
 
-	// 3. Query from D1 Database table if bound
-	if (env.DB) {
-		try {
-			const query = `
-				SELECT 
-					a.project_id as projectId,
-					a.provider_cred_id as providerCredId,
-					a.daily_slice as dailySlice,
-					a.priority as priority,
-					c.id as credId,
-					c.provider as provider,
-					c.label as label,
-					c.daily_limit as dailyLimit,
-					c.cost_per_k as costPerK,
-					c.enabled as enabled
-				FROM project_provider_allocations a
-				JOIN provider_credentials c ON a.provider_cred_id = c.id
-				WHERE a.project_id = ?
-				ORDER BY a.priority ASC
-			`;
-			const { results } = await env.DB.prepare(query).bind(projectId).all();
-			if (results && results.length > 0) {
-				return results.map((row: any) => ({
-					projectId: row.projectId,
-					providerCredId: row.providerCredId,
-					dailySlice: Number(row.dailySlice ?? 0),
-					priority: Number(row.priority ?? 1),
-					credential: {
-						id: row.credId,
-						provider: row.provider,
-						label: row.label,
-						dailyLimit: Number(row.dailyLimit ?? 0),
-						costPerK: Number(row.costPerK ?? 0),
-						enabled: Boolean(row.enabled ?? true),
-					},
-				}));
-			}
-		} catch {
-			// Fall through to environment-based fallback
-		}
-	}
-
-	// 4. Fallback: If no allocations found in state or DB, check environment bindings
+	// 4. Fallback: If no allocations found in DB or state, check environment bindings
 	const fallbackList: Array<ProjectAllocation & { credential: ProviderCredential }> = [];
 
 	if (env.BREVO_API_KEY) {
@@ -322,6 +371,23 @@ export async function resolveProjectAllocations(
 				provider: "resend",
 				label: "Resend (Env)",
 				dailyLimit: 100,
+				costPerK: 0,
+				enabled: true,
+			},
+		});
+	}
+
+	if (env.EMAIL) {
+		fallbackList.push({
+			projectId,
+			providerCredId: "cred_cloudflare_main",
+			dailySlice: 10000,
+			priority: 3,
+			credential: {
+				id: "cred_cloudflare_main",
+				provider: "cloudflare",
+				label: "Cloudflare Native Email",
+				dailyLimit: 10000,
 				costPerK: 0,
 				enabled: true,
 			},

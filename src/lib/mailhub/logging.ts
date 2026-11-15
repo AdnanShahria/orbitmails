@@ -313,6 +313,7 @@ export class SendLogBuffer {
 				this.timer = null;
 				void this.flush();
 			}, this.options.flushIntervalMs);
+			(this.timer as { unref?: () => void })?.unref?.();
 		}
 	}
 

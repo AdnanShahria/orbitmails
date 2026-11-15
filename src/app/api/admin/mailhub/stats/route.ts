@@ -153,7 +153,14 @@ export async function GET(request: Request) {
 			}
 		}
 
-		let activeProjectsCount = state.projects.filter((p) => p.status === "active").length;
+		const normalizeProj = (id: string) =>
+			id.toLowerCase().replace(/^proj_/, "").replace(/[-_]/g, "");
+		const activeProjectSlugs = new Set(
+			state.projects
+				.filter((p) => p.status === "active")
+				.map((p) => normalizeProj(p.slug || p.id))
+		);
+		let activeProjectsCount = activeProjectSlugs.size;
 		if (access.env.DB) {
 			const tables = ["email_router_send_logs", "send_log"];
 			for (const table of tables) {
@@ -164,7 +171,11 @@ export async function GET(request: Request) {
 						.bind(realtimeSummary.todayDateBucket)
 						.all();
 					if (distinct?.results && distinct.results.length > 0) {
-						activeProjectsCount = Math.max(activeProjectsCount, distinct.results.length);
+						const merged = new Set(activeProjectSlugs);
+						for (const row of distinct.results as Array<{ project_id?: string }>) {
+							if (row.project_id) merged.add(normalizeProj(String(row.project_id)));
+						}
+						activeProjectsCount = Math.max(activeProjectsCount, merged.size);
 						break;
 					}
 				} catch {}
@@ -182,11 +193,14 @@ export async function GET(request: Request) {
 			quotaUtilizationPct,
 		};
 
-		return NextResponse.json({
-			success: true,
-			stats,
-			providers,
-		});
+		return NextResponse.json(
+			{
+				success: true,
+				stats,
+				providers,
+			},
+			{ headers: { "Cache-Control": "no-store" } }
+		);
 	} catch (err: any) {
 		console.error("[GET /api/admin/mailhub/stats] Error:", err);
 		return NextResponse.json(

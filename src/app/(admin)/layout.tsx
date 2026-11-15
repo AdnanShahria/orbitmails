@@ -33,6 +33,7 @@ const primaryOnlyPrefixes = [
   "/general",
   "/ai-usage",
   "/mailhub",
+  "/admin/mailhub",
 ];
 
 export default function DashboardLayout({
@@ -71,7 +72,7 @@ export default function DashboardLayout({
                 <MailboxSelector />
               </header>
               <main id="main-content" tabIndex={-1} className={clsx("focus:outline-none page-flush min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-tl-3xl max-md:rounded-t-3xl max-md:bg-white max-md:pb-24 px-6 py-10 scrollbar-gutter-stable lg:px-12", mobileTitle && "max-md:[&_h1]:sr-only")}>
-                <div className={clsx("w-full", pathname.startsWith("/mailhub") ? "max-w-6xl" : "max-w-3xl")}>{children}</div>
+                <div className={clsx("w-full", (pathname.startsWith("/mailhub") || pathname.startsWith("/admin/mailhub")) ? "max-w-6xl" : "max-w-3xl")}>{children}</div>
               </main>
             </div>
             <FloatingComposer />

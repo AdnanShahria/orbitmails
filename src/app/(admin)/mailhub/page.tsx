@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   Plus,
@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth/client";
 import { AddProjectModal } from "@/components/mailhub/add-project-modal";
+import { RoutingKeyModal, type KeyItem } from "@/components/mailhub/routing-key-modal";
 import { ActivityFeed } from "./activity-feed";
 import { MailHubNavTabs } from "./mailhub-nav-tabs";
 import { ProjectsTable } from "./projects-table";
@@ -62,6 +63,8 @@ export default function MailHubDashboardPage() {
 
   // Modals and filters state
   const [activeProjectForTest, setActiveProjectForTest] = useState<MailHubProject | null>(null);
+  const [keyModalProject, setKeyModalProject] = useState<{ id: string; name: string; slug: string } | null>(null);
+  const [initialModalKey, setInitialModalKey] = useState<string | null>(null);
   const [isTestSendOpen, setIsTestSendOpen] = useState(false);
   const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
@@ -342,10 +345,53 @@ export default function MailHubDashboardPage() {
     return res.json() as Promise<{ project: any; key: string }>;
   };
 
-  const handleProjectCreated = () => {
+  const generateKeyMutation = useMutation({
+    mutationFn: async ({ projectId, name }: { projectId: string; name?: string }) => {
+      const res = await authFetch("/api/admin/mailhub/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "generate", projectId, name }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as Record<string, any>;
+        throw new Error(err.error || "Failed to generate key");
+      }
+      return res.json() as Promise<{ fullKey: string; routingKey: KeyItem }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mailhub-allocations"] });
+    },
+  });
+
+  const revokeKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      const res = await authFetch("/api/admin/mailhub/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "revoke", keyId }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as Record<string, any>;
+        throw new Error(err.error || "Failed to revoke key");
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mailhub-allocations"] });
+    },
+  });
+
+  const handleProjectCreated = (created?: { project: any; key: string }) => {
     queryClient.invalidateQueries({ queryKey: ["mailhub-allocations"] });
     queryClient.invalidateQueries({ queryKey: ["mailhub-stats"] });
     setIsAddProjectOpen(false);
+    if (created?.project) {
+      setKeyModalProject({
+        id: created.project.id,
+        name: created.project.name,
+        slug: created.project.slug,
+      });
+      setInitialModalKey(created.key);
+    }
   };
 
   return (
@@ -425,6 +471,10 @@ export default function MailHubDashboardPage() {
         onOpenQuotaModal={() => setIsQuotaModalOpen(true)}
         onFilterProjectLogs={(projectId) => setProjectFilterForLogs(projectId)}
         onOpenAddProject={() => setIsAddProjectOpen(true)}
+        onOpenRoutingKeys={(project) => {
+          setInitialModalKey(null);
+          setKeyModalProject({ id: project.id, name: project.name, slug: project.slug });
+        }}
       />
 
       {/* 6. Live Activity Stream & Diagnostic Waterfall */}
@@ -459,6 +509,28 @@ export default function MailHubDashboardPage() {
         onAddProject={handleAddProject}
         onProjectCreated={handleProjectCreated}
       />
+
+      {/* Routing Key & Integration Modal */}
+      {keyModalProject && (
+        <RoutingKeyModal
+          isOpen={Boolean(keyModalProject)}
+          onClose={() => {
+            setKeyModalProject(null);
+            setInitialModalKey(null);
+          }}
+          projectId={keyModalProject.id}
+          projectName={keyModalProject.name}
+          projectSlug={keyModalProject.slug}
+          initialKey={initialModalKey}
+          keys={(allocationsResponse?.keys as KeyItem[]) || []}
+          onGenerateKey={async (pId, name) => {
+            return await generateKeyMutation.mutateAsync({ projectId: pId, name });
+          }}
+          onRevokeKey={async (keyId) => {
+            await revokeKeyMutation.mutateAsync(keyId);
+          }}
+        />
+      )}
     </div>
   );
 }

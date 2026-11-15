@@ -47,6 +47,7 @@ interface RoutingKeyModalProps {
 	projectName: string;
 	projectSlug: string;
 	keys: KeyItem[];
+	initialKey?: string | null;
 	onGenerateKey: (projectId: string, name?: string) => Promise<{ fullKey: string; routingKey: KeyItem }>;
 	onRevokeKey: (keyId: string) => Promise<void>;
 }
@@ -57,13 +58,14 @@ export function RoutingKeyModal({
 	projectId,
 	projectName,
 	projectSlug,
-	keys,
+	keys = [],
+	initialKey = null,
 	onGenerateKey,
 	onRevokeKey,
 }: RoutingKeyModalProps) {
 	const [keyName, setKeyName] = useState("");
 	const [isGenerating, setIsGenerating] = useState(false);
-	const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
+	const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(initialKey);
 	const [viewingGuideKey, setViewingGuideKey] = useState<string | null>(null);
 	const [activeTab, setActiveTab] = useState<"native_code" | "deploy" | "env_file" | "ai_prompt" | "resend_code">("native_code");
 	const [codeLang, setCodeLang] = useState<"typescript" | "python" | "curl">("typescript");
@@ -76,10 +78,16 @@ export function RoutingKeyModal({
 	const [copiedEnv, setCopiedEnv] = useState(false);
 	const [copiedResend, setCopiedResend] = useState(false);
 
-	const projectKeys = keys.filter((k) => k.projectId === projectId);
+	React.useEffect(() => {
+		if (initialKey) {
+			setNewlyCreatedKey(initialKey);
+		}
+	}, [initialKey]);
 
-	const hostUrl = typeof window !== "undefined" && window.location.host
-		? `https://${window.location.host}`
+	const projectKeys = (keys || []).filter((k) => k?.projectId === projectId);
+
+	const hostUrl = typeof window !== "undefined" && window.location.origin
+		? window.location.origin
 		: "https://mail.orbitsaas.cloud";
 
 	const copyToClipboard = async (text: string, type: "key" | "prompt" | "code" | "deploy" | "env" | "resend") => {

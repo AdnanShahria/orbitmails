@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AUTH_SESSION_CHANGED_EVENT, authFetch } from "@/lib/auth/client";
+import { LICENSE_STATUS_CHANGED_EVENT } from "@/lib/licenses/constants";
 
 export type CurrentUser = {
 	id: string;
@@ -12,6 +13,7 @@ export type CurrentUser = {
 	canManageMailboxes: boolean;
 	canManageDomains: boolean;
 	canManageUsers: boolean;
+	canManageAccounts?: boolean;
 	hasAvatar: boolean;
 };
 
@@ -38,7 +40,10 @@ export function clearCurrentUserCache(): void {
 	userRequest = null;
 }
 
-if (typeof window !== "undefined") window.addEventListener(AUTH_SESSION_CHANGED_EVENT, clearCurrentUserCache);
+if (typeof window !== "undefined") {
+	window.addEventListener(AUTH_SESSION_CHANGED_EVENT, clearCurrentUserCache);
+	window.addEventListener(LICENSE_STATUS_CHANGED_EVENT, clearCurrentUserCache);
+}
 
 /** The cached answer if it is still fresh, without a request. */
 export function peekSessionInfo(): SessionInfo | null {

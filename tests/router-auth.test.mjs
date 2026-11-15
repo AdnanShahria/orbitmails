@@ -95,6 +95,13 @@ test("WP-03: Routing Key Parsing", () => {
 	assert.strictEqual(parsed.entropy, "8f3a9e1b2c4d5e6f7a8b9c0d1e2f3a4b");
 	assert.strictEqual(parsed.prefix, "om_live_aurelia_8f3a9e");
 
+	// Key with orb_ prefix
+	const orbKey = "orb_live_aurelia_8f3a9e1b2c4d5e6f7a8b9c0d1e2f3a4b";
+	const parsedOrb = parseRoutingKey(orbKey);
+	assert.ok(parsedOrb !== null);
+	assert.strictEqual(parsedOrb.environment, "live");
+	assert.strictEqual(parsedOrb.projectSlug, "aurelia");
+
 	// Invalid keys
 	assert.strictEqual(parseRoutingKey("invalid_key"), null);
 	assert.strictEqual(parseRoutingKey("om_stage_aurelia_1234567890abcdef"), null); // invalid env

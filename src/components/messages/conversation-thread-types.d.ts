@@ -7,6 +7,7 @@ export type ConversationThreadProps = {
 	position: "before" | "after";
 	messages: ThreadMessage[];
 	mailboxId: string | null;
+	mailboxHasAvatar?: boolean;
 	currentAccountName?: string;
 	ownAddress?: string | null;
 	ownAddresses?: string[];
@@ -19,6 +20,7 @@ export type ConversationThreadProps = {
 export type ConversationMessageCardProps = {
 	message: ThreadMessage;
 	mailboxId: string | null;
+	mailboxHasAvatar?: boolean;
 	currentAccountName?: string;
 	ownAddress?: string | null;
 	ownAddresses?: string[];

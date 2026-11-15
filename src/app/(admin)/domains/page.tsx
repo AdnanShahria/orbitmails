@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { List } from "@/components/ui/list";
-import { CheckCircle2, Cloud, LoaderCircle, Plus, RefreshCw } from "@/components/icons";
+import { AlertCircle, CheckCircle2, Cloud, LoaderCircle, Plus, RefreshCw, X } from "@/components/icons";
 import { authFetch } from "@/lib/auth/client";
 import type { DnsAuthRecord, DnsStatusSummary, Domain, DomainDnsCache, DomainDnsView, DomainPreflight, ReceivingProvider, SendingProvider } from "./types";
 import DomainItemCard from "./DomainItemCard";
@@ -59,15 +59,51 @@ export default function DomainsPage() {
   });
 
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
   const syncCloudflare = async () => {
     setSyncing(true);
+    setSyncStatus(null);
     try {
       const res = await authFetch("/api/auth/cloudflare/sync", { method: "POST" });
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as {
+        error?: string;
+        ok?: boolean;
+        result?: {
+          totalZones: number;
+          added: string[];
+          updated: string[];
+          existing: string[];
+          failed: { hostname: string; error: string }[];
+        };
+      };
       if (!res.ok) throw new Error(data.error || "Sync failed");
       qc.invalidateQueries({ queryKey: ["domains"] });
       qc.invalidateQueries({ queryKey: ["me"] });
+
+      if (data.result) {
+        const { added, updated, existing, failed } = data.result;
+        const details: string[] = [];
+        if (added.length) details.push(`${added.length} added`);
+        if (updated.length) details.push(`${updated.length} upgraded`);
+        if (existing.length) details.push(`${existing.length} verified`);
+        if (failed.length) details.push(`${failed.length} failed`);
+        const summary = details.length ? details.join(", ") : "All zones synced";
+        setSyncStatus({
+          type: failed.length && !added.length && !updated.length ? "error" : "success",
+          message: `Cloudflare sync: ${summary}`,
+        });
+      } else {
+        setSyncStatus({ type: "success", message: "Cloudflare domains synced successfully." });
+      }
     } catch (e) {
+      setSyncStatus({
+        type: "error",
+        message: e instanceof Error ? e.message : "Failed to sync domains from Cloudflare",
+      });
       console.error(e);
     } finally {
       setSyncing(false);
@@ -496,6 +532,35 @@ export default function DomainsPage() {
         </Dialog>
         </div>
       </div>
+
+      {syncStatus && (
+        <div
+          role="status"
+          className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-xs font-medium animate-in fade-in duration-200 ${
+            syncStatus.type === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+              : "border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {syncStatus.type === "success" ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+            )}
+            <span>{syncStatus.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSyncStatus(null)}
+            className="text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200"
+            aria-label="Dismiss message"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       <section className="space-y-3">
         {/* <div className="flex items-center justify-between">
 					<span className="text-sm text-neutral-500">{(data?.domains ?? []).length} total</span>

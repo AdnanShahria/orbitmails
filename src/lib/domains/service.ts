@@ -20,6 +20,7 @@ import type { DomainProvisioningChanges } from "@/lib/domains/types";
 import { findSendingSubdomain } from "@/lib/domains/sending-status";
 import { preflightDomain } from "@/lib/domains/preflight";
 import { hasCloudflareCredentials } from "@/lib/runtime";
+import { hasConfiguredCloudflare } from "@/lib/domains/cloudflare-auth";
 
 export type DomainDnsView = {
 	routing: { records: CfDnsRecord[]; missing: CfDnsRecord[]; status?: string };
@@ -52,7 +53,8 @@ export async function addDomainForUser(
 	if (claimedHostname && claimedHostname.userId !== userId) {
 		throw new Error("Domain is already registered");
 	}
-	if (!options?.skipDns && hasCloudflareCredentials(env)) {
+	const hasCf = hasCloudflareCredentials(env) || await hasConfiguredCloudflare(env);
+	if (!options?.skipDns && hasCf) {
 		const { zone } = await preflightDomain(env, normalizedHostname);
 		const [claimedZone] = await db.select({ userId: domains.userId }).from(domains).where(and(
 			eq(domains.zoneId, zone.id),

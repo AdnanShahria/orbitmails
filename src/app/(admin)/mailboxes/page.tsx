@@ -60,7 +60,7 @@ export default function MailboxesPage() {
 			if (!res.ok) return { accounts: [] as MailboxOwner[] };
 			return (await res.json()) as { accounts: MailboxOwner[] };
 		},
-		enabled: createOpen,
+		enabled: createOpen && !!account.data?.user?.canManageAccounts,
 	});
 
 	const domains = useQuery({

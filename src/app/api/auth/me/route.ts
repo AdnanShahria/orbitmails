@@ -38,6 +38,7 @@ export async function GET(request: Request) {
 			canManageMailboxes: user.canManageMailboxes,
 			canManageDomains: user.canManageDomains,
 			canManageUsers: user.canManageUsers,
+			canManageAccounts: user.role === "admin" && entitlements.canManageAccounts,
 			keyboardShortcutsEnabled: user.keyboardShortcutsEnabled,
 			spamProtectionEnabled: user.spamProtectionEnabled,
 			showFullRecipientAddresses: user.showFullRecipientAddresses,

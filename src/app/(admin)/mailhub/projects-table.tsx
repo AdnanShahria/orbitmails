@@ -6,6 +6,7 @@ import {
   Check,
   Copy,
   ExternalLink,
+  KeyRound,
   Play,
   Plus,
   RefreshCw,
@@ -26,6 +27,7 @@ interface ProjectsTableProps {
   onOpenQuotaModal: (project: MailHubProject) => void;
   onFilterProjectLogs: (projectId: string) => void;
   onOpenAddProject?: () => void;
+  onOpenRoutingKeys?: (project: MailHubProject) => void;
 }
 
 export function ProjectsTable({
@@ -34,10 +36,15 @@ export function ProjectsTable({
   onOpenQuotaModal,
   onFilterProjectLogs,
   onOpenAddProject,
+  onOpenRoutingKeys,
 }: ProjectsTableProps) {
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
   async function handleCopyKey(project: MailHubProject) {
+    if (project.apiKey.includes("••••") && onOpenRoutingKeys) {
+      onOpenRoutingKeys(project);
+      return;
+    }
     try {
       await navigator.clipboard.writeText(project.apiKey);
       setCopiedKeyId(project.id);
@@ -262,6 +269,19 @@ export function ProjectsTable({
                       {/* 5. Quick Actions with Accessible >=44px Targets */}
                       <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {onOpenRoutingKeys && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => onOpenRoutingKeys(project)}
+                              title="View integration code and manage routing keys"
+                              className="min-h-[44px] gap-2 rounded-xl border-neutral-200/90 bg-white px-3 text-xs font-semibold text-neutral-800 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 shadow-2xs transition-colors"
+                            >
+                              <KeyRound className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                              <span>Keys</span>
+                            </Button>
+                          )}
+
                           <Button
                             variant="outline"
                             size="sm"

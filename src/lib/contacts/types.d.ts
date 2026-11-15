@@ -26,5 +26,6 @@ export type ContactDisplayName = {
 export type MessageContactNames = {
 	/** Resolved sender label: a manually named contact, otherwise the message's From name. */
 	fromContactName: string | null;
+	fromContactHasAvatar: boolean;
 	toContactName: string | null;
 };

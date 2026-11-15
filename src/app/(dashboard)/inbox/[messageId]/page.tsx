@@ -235,6 +235,7 @@ export default function MessageDetailPage() {
         position={latestMessagesFirst ? "after" : "before"}
         messages={thread.messages}
         mailboxId={message.mailboxId}
+        mailboxHasAvatar={!!messageMailbox?.hasAvatar}
         currentAccountName={currentAccountName}
         ownAddress={ownAddress}
         ownAddresses={ownAddresses}
@@ -251,8 +252,8 @@ export default function MessageDetailPage() {
                 mailboxId={message.mailboxId}
                 address={message.fromAddr}
                 name={fromName}
-                hasManagedAvatar={message.direction === "inbound"}
-                managedAvatarUrl={message.direction === "outbound" && message.mailboxId
+                hasManagedAvatar={message.direction === "inbound" && !!message.fromContactHasAvatar}
+                managedAvatarUrl={message.direction === "outbound" && message.mailboxId && messageMailbox?.hasAvatar
                   ? `/api/mailboxes/${message.mailboxId}/avatar`
                   : undefined}
                 className="mt-2"
@@ -392,6 +393,7 @@ export default function MessageDetailPage() {
         position={latestMessagesFirst ? "before" : "after"}
         messages={thread.messages}
         mailboxId={message.mailboxId}
+        mailboxHasAvatar={!!messageMailbox?.hasAvatar}
         currentAccountName={currentAccountName}
         ownAddress={ownAddress}
         ownAddresses={ownAddresses}

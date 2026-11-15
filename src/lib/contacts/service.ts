@@ -54,15 +54,19 @@ export async function upsertContactFromAddress(env: CloudflareEnv, input: Contac
 	return created ?? null;
 }
 
-export async function getContactDisplayNameMap(env: CloudflareEnv, userId: string, addresses: string[]) {
+async function getContactRows(env: CloudflareEnv, userId: string, addresses: string[]) {
 	const emails = Array.from(new Set(addresses.map(normalizeEmailAddress).filter(Boolean)));
-	if (emails.length === 0) return new Map<string, ContactDisplayName>();
+	if (emails.length === 0) return [];
 
 	const db = getDb(env);
-	const rows = await db
+	return db
 		.select()
 		.from(contacts)
 		.where(and(eq(contacts.userId, userId), inArray(contacts.email, emails)));
+}
+
+export async function getContactDisplayNameMap(env: CloudflareEnv, userId: string, addresses: string[]) {
+	const rows = await getContactRows(env, userId, addresses);
 
 	const entries = rows
 		.filter((contact) => !!contact.displayName)
@@ -94,11 +98,18 @@ export async function getMessageContactNames(
 ): Promise<MessageContactNames> {
 	// `toAddr` may be a full recipient list; the name shown belongs to the first one.
 	const firstTo = getFirstEmailAddressEntry(toAddr);
-	const contactMap = await getContactDisplayNameMap(env, userId, [fromAddr, firstTo]);
+	const rows = await getContactRows(env, userId, [fromAddr, firstTo]);
+	const byEmail = new Map(rows.map((contact) => [contact.email, contact]));
+	const fromContact = byEmail.get(normalizeEmailAddress(fromAddr));
+	const toContact = byEmail.get(normalizeEmailAddress(firstTo));
 
 	return {
-		fromContactName: getSenderDisplayName(fromAddr, contactMap.get(normalizeEmailAddress(fromAddr))),
-		toContactName: contactMap.get(normalizeEmailAddress(firstTo))?.displayName ?? null,
+		fromContactName: getSenderDisplayName(
+			fromAddr,
+			fromContact?.displayName ? { displayName: fromContact.displayName, source: fromContact.source } : undefined,
+		),
+		fromContactHasAvatar: !!fromContact?.avatarKey,
+		toContactName: toContact?.displayName ?? null,
 	};
 }
 

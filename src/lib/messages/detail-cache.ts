@@ -1,4 +1,7 @@
 import { AUTH_SESSION_CHANGED_EVENT, authFetch } from "@/lib/auth/client";
+import { CONTACT_AVATAR_CHANGED_EVENT } from "@/lib/contacts/avatar-client";
+import type { ContactAvatarChangedDetail } from "@/lib/contacts/avatar-client-types";
+import { normalizeEmailAddress } from "@/lib/email/address";
 import type { Message } from "@/hooks/types";
 import type { CachedMessageDetail } from "./detail-cache-types";
 
@@ -65,6 +68,24 @@ export async function fetchCachedMessageDetail(messageId: string, force = false)
 	return request;
 }
 
+function updateCachedContactAvatar(detail: ContactAvatarChangedDetail | undefined) {
+	if (!detail?.email) return;
+	for (const [id, entry] of detailCache.entries()) {
+		if (!entry.data.message) continue;
+		if (normalizeEmailAddress(entry.data.message.fromAddr) !== detail.email) continue;
+		detailCache.set(id, {
+			...entry,
+			data: {
+				...entry.data,
+				message: { ...entry.data.message, fromContactHasAvatar: !!detail.hasAvatar },
+			},
+		});
+	}
+}
+
 if (typeof window !== "undefined") {
 	window.addEventListener(AUTH_SESSION_CHANGED_EVENT, clearMessageDetailCache);
+	window.addEventListener(CONTACT_AVATAR_CHANGED_EVENT, (event) => {
+		updateCachedContactAvatar((event as CustomEvent<ContactAvatarChangedDetail>).detail);
+	});
 }

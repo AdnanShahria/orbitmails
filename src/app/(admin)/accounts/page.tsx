@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { authFetch } from "@/lib/auth/client";
 import { LicenseRequiredOverlay } from "@/components/license-required-overlay";
-import { useCurrentUser } from "@/hooks/use-current-user";
+import { fetchCurrentUser, useCurrentUser } from "@/hooks/use-current-user";
 import { defaultTranslator } from "@/lib/i18n/utils";
 import { AccountAliases } from "./account-aliases";
 import { AccountsTable } from "./accounts-table";
@@ -55,19 +55,35 @@ export default function AccountsPage() {
 	}
 
 	useEffect(() => {
-		fetchAccounts().then(async (list) => {
+		let cancelled = false;
+		void fetchCurrentUser().then(async (user) => {
+			if (cancelled) return;
+			if (user?.canManageAccounts === false) {
+				setTeamRequired(true);
+				setMessage(null);
+				return;
+			}
+			const list = await fetchAccounts();
+			if (cancelled) return;
 			setAccounts(list.accounts ?? []);
 			setSeats(list.seats ?? null);
 			const response = await authFetch("/api/domains");
 			const data = (await response.json()) as { domains?: Domain[]; error?: string };
 			if (!response.ok) throw new Error(data.error ?? t("accounts.domainsFailed"));
+			if (cancelled) return;
 			setDomains(data.domains ?? []);
 			setDomainId(data.domains?.[0]?.id ?? "");
 		}).catch((error) => {
+			if (cancelled) return;
 			const text = error instanceof Error ? error.message : t("accounts.loadFailed");
 			setTeamRequired(/(pro|team) license/i.test(text) && !/seats/i.test(text));
 			setMessage(text);
-		}).finally(() => setLoading(false));
+		}).finally(() => {
+			if (!cancelled) setLoading(false);
+		});
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	async function createAccount(event: React.FormEvent<HTMLFormElement>) {

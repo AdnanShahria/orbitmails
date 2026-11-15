@@ -23,12 +23,12 @@ import type {
 
 /**
  * Regex enforcing the routing key structure:
- * 1. Prefix: "om_"
+ * 1. Prefix: "om_" or "orb_"
  * 2. Environment: "live" | "test"
  * 3. Project Slug: 1-32 lowercase alphanumeric characters or hyphens
  * 4. Random Entropy: at least 16 alphanumeric / hex characters
  */
-export const ROUTING_KEY_REGEX = /^om_(live|test)_([a-z0-9_-]{1,32})_([a-zA-Z0-9]{16,64})$/;
+export const ROUTING_KEY_REGEX = /^(?:om|orb)_(live|test)_([a-z0-9_-]{1,32})_([a-zA-Z0-9]{16,64})$/;
 
 /**
  * Normalize and validate a project slug

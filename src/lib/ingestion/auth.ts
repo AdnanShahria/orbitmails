@@ -90,8 +90,8 @@ export async function authenticateIngestionRequest(
 		};
 	}
 
-	// 1. Check if token is a MailHub Project Routing Key (`om_...`)
-	if (token.startsWith("om_")) {
+	// 1. Check if token is a MailHub Project Routing Key (`om_...` or `orb_...`)
+	if (token.startsWith("om_") || token.startsWith("orb_")) {
 		const resolved = await resolveRoutingKey(token, env, ctx);
 		if (resolved) {
 			const { project } = resolved;

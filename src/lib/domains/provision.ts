@@ -9,6 +9,7 @@ import {
 } from "@/lib/domains/catch-all-routing";
 import { isZoneApex } from "@/lib/domains/utils";
 import { hasCloudflareCredentials, isNodeRuntime } from "@/lib/runtime";
+import { hasConfiguredCloudflare } from "@/lib/domains/cloudflare-auth";
 import type { DomainProvisioningChanges, DomainProvisioningResult } from "@/lib/domains/types";
 import { removeMxRecords } from "@/lib/domains/mx-records";
 import { rollbackDomainProvisioning } from "@/lib/domains/rollback";
@@ -38,7 +39,8 @@ export async function provisionDomainOnCloudflare(
 	options?: { enableRouting?: boolean; enableSending?: boolean; replaceMxRecords?: boolean; skipDns?: boolean },
 ): Promise<DomainProvisioningResult> {
 	const normalized = hostname.toLowerCase().trim();
-	if (options?.skipDns || !hasCloudflareCredentials(env)) {
+	const hasCf = hasCloudflareCredentials(env) || await hasConfiguredCloudflare(env);
+	if (options?.skipDns || !hasCf) {
 		// Nothing to provision: the operator points MX at this server themselves,
 		// or chose to skip DNS for now.
 		return {

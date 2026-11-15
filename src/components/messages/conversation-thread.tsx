@@ -37,6 +37,7 @@ export function ConversationThread({
 	position,
 	messages,
 	mailboxId,
+	mailboxHasAvatar,
 	currentAccountName,
 	ownAddress,
 	ownAddresses,
@@ -64,6 +65,7 @@ export function ConversationThread({
 					<ConversationMessageCard
 						message={firstMessage}
 						mailboxId={mailboxId}
+						mailboxHasAvatar={mailboxHasAvatar}
 						currentAccountName={currentAccountName}
 						ownAddress={ownAddress}
 						ownAddresses={ownAddresses}
@@ -91,6 +93,7 @@ export function ConversationThread({
 							<ConversationMessageCard
 								message={message}
 								mailboxId={mailboxId}
+								mailboxHasAvatar={mailboxHasAvatar}
 								currentAccountName={currentAccountName}
 								ownAddress={ownAddress}
 								ownAddresses={ownAddresses}
@@ -104,6 +107,7 @@ export function ConversationThread({
 						<ConversationMessageCard
 							message={lastMessage}
 							mailboxId={mailboxId}
+							mailboxHasAvatar={mailboxHasAvatar}
 							currentAccountName={currentAccountName}
 							ownAddress={ownAddress}
 							ownAddresses={ownAddresses}
@@ -119,6 +123,7 @@ export function ConversationThread({
 export function ConversationMessageCard({
 	message,
 	mailboxId,
+	mailboxHasAvatar,
 	currentAccountName,
 	ownAddress,
 	ownAddresses,
@@ -175,7 +180,7 @@ export function ConversationMessageCard({
 							address={message.fromAddr}
 							name={sender}
 							hasManagedAvatar={message.fromContactHasAvatar}
-							managedAvatarUrl={outbound && mailboxId ? `/api/mailboxes/${mailboxId}/avatar` : undefined}
+							managedAvatarUrl={outbound && mailboxId && mailboxHasAvatar ? `/api/mailboxes/${mailboxId}/avatar` : undefined}
 							className={expanded ? "mt-1" : ""}
 						/>
 						<span className="min-w-0 flex-1">

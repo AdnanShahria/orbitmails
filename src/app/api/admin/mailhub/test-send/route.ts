@@ -88,23 +88,32 @@ export async function POST(request: Request) {
 					.where(eq(domains.status, "active"))
 					.limit(1);
 				if (activeDomain?.hostname) {
-					fromAddress = `relay@${activeDomain.hostname}`;
+					fromAddress = `notifications@${activeDomain.hostname}`;
 				}
 			} catch {
 				// ignore
 			}
 		}
 
-		if (!fromAddress) {
-			const hasResend = !!(
-				(access.env as any)?.RESEND_API_KEY ||
-				(typeof process !== "undefined" && process.env?.RESEND_API_KEY)
-			);
-			if (hasResend || data.routingMode === "resend") {
-				fromAddress = "onboarding@resend.dev";
-			} else {
-				fromAddress = `relay@${projectSlug}.mailhub.internal`;
+		if (!fromAddress || fromAddress.endsWith(".internal")) {
+			if (access.env?.DB) {
+				try {
+					const db = getDb(access.env as any);
+					const [anyDomain] = await db
+						.select({ hostname: domains.hostname })
+						.from(domains)
+						.limit(1);
+					if (anyDomain?.hostname) {
+						fromAddress = `notifications@${anyDomain.hostname}`;
+					}
+				} catch {
+					// ignore
+				}
 			}
+		}
+
+		if (!fromAddress || fromAddress.endsWith(".internal")) {
+			fromAddress = "onboarding@resend.dev";
 		}
 
 		const routingOptions: RoutingOptions = {};

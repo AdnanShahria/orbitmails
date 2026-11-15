@@ -273,11 +273,24 @@ export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
 			createdAt: "2026-11-01T00:00:00.000Z",
 			updatedAt: "2026-11-01T00:00:00.000Z",
 		},
+		{
+			id: "proj_fashiondoniya",
+			name: "Fashion Doniya",
+			slug: "fashiondoniya",
+			description: "Fashion Doniya e-commerce transactional & notification routing",
+			status: "active",
+			providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+			createdAt: "2026-11-01T00:00:00.000Z",
+			updatedAt: "2026-11-01T00:00:00.000Z",
+		},
 	],
 	allocations: [
 		{ projectId: "proj_production", providerId: "cred_brevo_main", dailySlice: 300, priority: 1, usedToday: 0 },
 		{ projectId: "proj_production", providerId: "cred_resend_main", dailySlice: 100, priority: 2, usedToday: 0 },
 		{ projectId: "proj_production", providerId: "cred_ses_backup", dailySlice: 10000, priority: 3, usedToday: 0 },
+		{ projectId: "proj_fashiondoniya", providerId: "cred_brevo_main", dailySlice: 150, priority: 1, usedToday: 0 },
+		{ projectId: "proj_fashiondoniya", providerId: "cred_resend_main", dailySlice: 50, priority: 2, usedToday: 0 },
+		{ projectId: "proj_fashiondoniya", providerId: "cred_ses_backup", dailySlice: 5000, priority: 3, usedToday: 0 },
 	],
 	keys: [
 		{
@@ -286,6 +299,18 @@ export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
 			name: "Production API Key",
 			prefix: "om_live_prod_8f3a9e",
 			displayPrefix: "om_live_prod_8f3a9e••••••••",
+			keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			environment: "live",
+			status: "active",
+			createdAt: "2026-11-01T00:00:00.000Z",
+			lastUsedAt: null,
+		},
+		{
+			id: "rkey_fashiondoniya_live",
+			projectId: "proj_fashiondoniya",
+			name: "Fashion Doniya Live Key",
+			prefix: "om_live_fashiondoniya_7a4b2c",
+			displayPrefix: "om_live_fashiondoniya_7a4b2c••••••••",
 			keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 			environment: "live",
 			status: "active",
@@ -308,6 +333,19 @@ const KV_STATE_KEY = "mailhub:state:v1";
 
 // In-memory memory singleton for fast local dev & edge caching
 let inMemoryState: MailHubState | null = null;
+let hasEnsuredStateTable = false;
+
+async function ensureMailHubStateTable(env: MailHubEnv): Promise<void> {
+	if (!env.DB || hasEnsuredStateTable) return;
+	try {
+		await env.DB.prepare(
+			"CREATE TABLE IF NOT EXISTS mailhub_state (id TEXT PRIMARY KEY, state_json TEXT, updated_at INTEGER)"
+		).run();
+		hasEnsuredStateTable = true;
+	} catch {
+		// Ignore if D1 read-only or not supported
+	}
+}
 
 /**
  * Load MailHub state with fallbacks across D1 SQL, Cloudflare KV, and In-Memory state.
@@ -316,7 +354,26 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 	const baseSeed = isTestEnvironment() ? DEFAULT_MAILHUB_STATE : CLEAN_PRODUCTION_MAILHUB_STATE;
 	let state: MailHubState = inMemoryState || JSON.parse(JSON.stringify(baseSeed));
 
-	if (env.KV) {
+	// 1. Try D1 SQL persistent table first (survives Worker cold starts and multi-isolate clusters)
+	if (env.DB) {
+		try {
+			await ensureMailHubStateTable(env);
+			const row = await env.DB.prepare(
+				"SELECT state_json FROM mailhub_state WHERE id = 'default' LIMIT 1"
+			).first();
+			if (row && typeof row.state_json === "string") {
+				const parsed = JSON.parse(row.state_json);
+				if (parsed && Array.isArray(parsed.projects)) {
+					state = parsed as MailHubState;
+				}
+			}
+		} catch {
+			// Fallback to KV or base seed
+		}
+	}
+
+	// 2. Try KV if D1 is not populated
+	if ((!state.projects || state.projects.length === 0) && env.KV) {
 		try {
 			const saved = await env.KV.get(KV_STATE_KEY, 'json');
 			if (saved && typeof saved === 'object' && (saved as any).projects) {
@@ -324,6 +381,137 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 			}
 		} catch {
 			// fallback
+		}
+	}
+
+	// 3. Ensure Fashion Doniya is present in state.projects if not in test environment
+	if (!isTestEnvironment()) {
+		const hasFashionDoniya = state.projects.some(
+			(p) => p.slug === "fashiondoniya" || p.id === "proj_fashiondoniya" || p.slug === "fashion-doniya"
+		);
+		if (!hasFashionDoniya) {
+			const fdProject: MailHubProject = {
+				id: "proj_fashiondoniya",
+				name: "Fashion Doniya",
+				slug: "fashiondoniya",
+				description: "Fashion Doniya e-commerce transactional & notification routing",
+				status: "active",
+				providerOrder: ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+				createdAt: "2026-11-01T00:00:00.000Z",
+				updatedAt: "2026-11-01T00:00:00.000Z",
+			};
+			state.projects.push(fdProject);
+			state.allocations.push(
+				{ projectId: "proj_fashiondoniya", providerId: "cred_brevo_main", dailySlice: 150, priority: 1, usedToday: 0 },
+				{ projectId: "proj_fashiondoniya", providerId: "cred_resend_main", dailySlice: 50, priority: 2, usedToday: 0 },
+				{ projectId: "proj_fashiondoniya", providerId: "cred_ses_backup", dailySlice: 5000, priority: 3, usedToday: 0 },
+			);
+			state.keys.push({
+				id: "rkey_fashiondoniya_live",
+				projectId: "proj_fashiondoniya",
+				name: "Fashion Doniya Live Key",
+				prefix: "om_live_fashiondoniya_7a4b2c",
+				displayPrefix: "om_live_fashiondoniya_7a4b2c••••••••",
+				keyHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+				environment: "live",
+				status: "active",
+				createdAt: "2026-11-01T00:00:00.000Z",
+				lastUsedAt: null,
+			});
+		}
+	}
+
+	// 4. Auto-reconcile with distinct project IDs from send logs so any project
+	// dispatched via SDK/API (like fashiondoniya) is permanently registered and visible.
+	if (env.DB) {
+		try {
+			const candidateTables = ["email_router_send_logs", "send_log"];
+			let distinctRows: any[] = [];
+			for (const table of candidateTables) {
+				try {
+					const res = await env.DB.prepare(`SELECT DISTINCT project_id FROM ${table}`).all();
+					if (res?.results && res.results.length > 0) {
+						distinctRows = res.results;
+						break;
+					}
+				} catch {
+					// try next
+				}
+			}
+
+			let hasNewProject = false;
+			for (const r of distinctRows) {
+				const rawId = String(r.project_id || "").trim();
+				if (!rawId) continue;
+				let cleanSlug = "";
+				try {
+					cleanSlug = normalizeProjectSlug(rawId);
+				} catch {
+					cleanSlug = rawId.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
+				}
+				if (!cleanSlug) continue;
+				const expectedId = cleanSlug.startsWith("proj_") ? cleanSlug : `proj_${cleanSlug}`;
+
+				const exists = state.projects.some(
+					(p) => p.id.toLowerCase() === expectedId.toLowerCase() ||
+					       p.id.toLowerCase() === rawId.toLowerCase() ||
+					       p.slug.toLowerCase() === cleanSlug.toLowerCase()
+				);
+
+				if (!exists) {
+					const rawName = rawId.replace(/^proj_/, "").replace(/[-_]/g, " ");
+					const displayName = rawName
+						.split(/\s+/)
+						.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+						.join(" ") || "Fashion Doniya";
+
+					const providerOrder = state.providers.filter((p) => p.enabled).map((p) => p.id);
+					const newProject: MailHubProject = {
+						id: expectedId,
+						name: displayName,
+						slug: cleanSlug,
+						description: `${displayName} Transactional Mail`,
+						status: "active",
+						providerOrder: providerOrder.length > 0 ? providerOrder : ["cred_brevo_main", "cred_resend_main", "cred_ses_backup"],
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					};
+
+					state.projects.push(newProject);
+
+					for (const prov of state.providers) {
+						state.allocations.push({
+							projectId: expectedId,
+							providerId: prov.id,
+							dailySlice: prov.dailyLimit > 1000 ? 5000 : 0,
+							priority: newProject.providerOrder.indexOf(prov.id) + 1 || 1,
+							usedToday: 0,
+						});
+					}
+
+					const keyGen = await generateRoutingKey({ projectSlug: cleanSlug, environment: "live" });
+					state.keys.push({
+						id: keyGen.keyId,
+						projectId: expectedId,
+						name: `${newProject.name} Live Key`,
+						prefix: keyGen.prefix,
+						displayPrefix: keyGen.displayPrefix,
+						keyHash: keyGen.keyHash,
+						environment: "live",
+						status: "active",
+						createdAt: keyGen.createdAt.toISOString(),
+						lastUsedAt: null,
+					});
+
+					hasNewProject = true;
+				}
+			}
+
+			if (hasNewProject) {
+				await saveMailHubState(env, state);
+			}
+		} catch {
+			// Best-effort reconciliation
 		}
 	}
 
@@ -346,15 +534,41 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 }
 
 /**
- * Save MailHub state to KV and memory cache.
+ * Save MailHub state to D1 SQL, Cloudflare KV, and memory cache.
  */
 export async function saveMailHubState(env: MailHubEnv, state: MailHubState): Promise<void> {
 	inMemoryState = state;
+
+	// 1. Persist to Cloudflare KV if bound
 	if (env.KV) {
 		try {
 			await env.KV.put(KV_STATE_KEY, JSON.stringify(state));
 		} catch (err) {
 			console.error("[saveMailHubState] Failed to persist to KV:", err);
+		}
+	}
+
+	// 2. Persist to D1 Database if bound (cross-dialect safe)
+	if (env.DB) {
+		try {
+			await ensureMailHubStateTable(env);
+			const stateJson = JSON.stringify(state);
+			const now = Date.now();
+			const existing = await env.DB.prepare(
+				"SELECT id FROM mailhub_state WHERE id = 'default' LIMIT 1"
+			).first();
+
+			if (existing) {
+				await env.DB.prepare(
+					"UPDATE mailhub_state SET state_json = ?, updated_at = ? WHERE id = 'default'"
+				).bind(stateJson, now).run();
+			} else {
+				await env.DB.prepare(
+					"INSERT INTO mailhub_state (id, state_json, updated_at) VALUES ('default', ?, ?)"
+				).bind(stateJson, now).run();
+			}
+		} catch (err) {
+			console.error("[saveMailHubState] Failed to persist to D1:", err);
 		}
 	}
 }

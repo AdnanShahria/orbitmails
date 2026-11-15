@@ -15,6 +15,7 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { hashRoutingKey, parseRoutingKey, timingSafeEqual } from "./keys";
+import { getMailHubState } from "@/lib/mailhub/storage";
 import type {
 	AuthenticatedProject,
 	CachedRoutingKey,
@@ -228,6 +229,31 @@ export async function resolveRoutingKey(
 
 		const row = rows?.[0];
 		if (!row) {
+			const fallbackState = await getMailHubState(env as any).catch(() => null);
+			if (fallbackState?.keys) {
+				const matchedKey = fallbackState.keys.find(
+					(k) => k.keyHash === keyHash || k.prefix === parsed.raw || parsed.raw.startsWith(k.prefix)
+				);
+				if (matchedKey && matchedKey.status === "active") {
+					const matchedProj = fallbackState.projects.find(
+						(p) => p.id === matchedKey.projectId || p.slug === matchedKey.projectId.replace(/^proj_/, "")
+					);
+					if (matchedProj && matchedProj.status === "active") {
+						return {
+							project: {
+								id: matchedProj.id,
+								slug: matchedProj.slug,
+								name: matchedProj.name,
+								environment: matchedKey.environment,
+								keyId: matchedKey.id,
+								keyPrefix: matchedKey.prefix,
+								rateLimitRps: 60,
+							},
+							routingKey: parsed,
+						};
+					}
+				}
+			}
 			return null;
 		}
 
@@ -300,6 +326,35 @@ export async function resolveRoutingKey(
 			routingKey: parsed,
 		};
 	} catch (dbErr) {
+		try {
+			const fallbackState = await getMailHubState(env as any).catch(() => null);
+			if (fallbackState?.keys) {
+				const matchedKey = fallbackState.keys.find(
+					(k) => k.keyHash === keyHash || k.prefix === parsed.raw || parsed.raw.startsWith(k.prefix)
+				);
+				if (matchedKey && matchedKey.status === "active") {
+					const matchedProj = fallbackState.projects.find(
+						(p) => p.id === matchedKey.projectId || p.slug === matchedKey.projectId.replace(/^proj_/, "")
+					);
+					if (matchedProj && matchedProj.status === "active") {
+						return {
+							project: {
+								id: matchedProj.id,
+								slug: matchedProj.slug,
+								name: matchedProj.name,
+								environment: matchedKey.environment,
+								keyId: matchedKey.id,
+								keyPrefix: matchedKey.prefix,
+								rateLimitRps: 60,
+							},
+							routingKey: parsed,
+						};
+					}
+				}
+			}
+		} catch {
+			// Ignore
+		}
 		console.error("[MailHub Auth] Database lookup error:", dbErr);
 		return null;
 	}

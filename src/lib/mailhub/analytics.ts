@@ -111,7 +111,7 @@ export async function getDailyProjectMetrics(
 				project_id AS projectId,
 				date_bucket AS dateBucket,
 				COUNT(*) AS totalSends,
-				SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS successfulSends,
+				SUM(CASE WHEN status IN ('sent', 'delivered') THEN 1 ELSE 0 END) AS successfulSends,
 				SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failedSends,
 				SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queuedSends,
 				ROUND(AVG(CASE WHEN latency_ms IS NOT NULL THEN latency_ms END), 1) AS avgLatencyMs
@@ -155,7 +155,7 @@ export async function getDailyProviderMetrics(
 				provider_cred_id AS providerCredId,
 				date_bucket AS dateBucket,
 				COUNT(*) AS totalAttempts,
-				SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS successfulSends,
+				SUM(CASE WHEN status IN ('sent', 'delivered') THEN 1 ELSE 0 END) AS successfulSends,
 				SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failedSends,
 				ROUND(AVG(CASE WHEN latency_ms IS NOT NULL THEN latency_ms END), 1) AS avgLatencyMs
 			FROM ${tableName}
@@ -197,7 +197,7 @@ export async function getProviderPerformanceSummary(
 				provider,
 				provider_cred_id AS providerCredId,
 				COUNT(*) AS totalAttempts,
-				SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS successfulSends,
+				SUM(CASE WHEN status IN ('sent', 'delivered') THEN 1 ELSE 0 END) AS successfulSends,
 				SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failedSends,
 				ROUND(AVG(CASE WHEN latency_ms IS NOT NULL THEN latency_ms END), 1) AS avgLatencyMs,
 				COUNT(DISTINCT project_id) AS activeProjectsCount
@@ -272,7 +272,7 @@ export async function getLatencyPercentiles(
 ): Promise<LatencyPercentileMetric[]> {
 	const rows = await executeQueryWithFallback(env, (tableName) => {
 		const { whereSql, params } = buildWhereClause(filter, [
-			"status = 'sent'",
+			"status IN ('sent', 'delivered')",
 			"latency_ms IS NOT NULL",
 		]);
 
@@ -327,7 +327,7 @@ export async function getLatencyHistogramBuckets(
 ): Promise<LatencyHistogramBucket[]> {
 	const rows = await executeQueryWithFallback(env, (tableName) => {
 		const { whereSql, params } = buildWhereClause(filter, [
-			"status = 'sent'",
+			"status IN ('sent', 'delivered')",
 			"latency_ms IS NOT NULL",
 		]);
 

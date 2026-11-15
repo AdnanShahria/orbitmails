@@ -6,7 +6,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { mailboxes, messages } from "@/db/schema";
+import { domains, mailboxes, messages } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { getEmailAddress, getEmailDisplayName } from "@/lib/email/address";
 import { sendEmail, type SendEmailInput } from "@/lib/email/send";
@@ -277,8 +277,28 @@ export async function sendSingleNormalizedMessage(
 		}
 
 		// 4c. Execute delivery via sendWithFailover
+		let effectiveFrom = payload.from;
+		if (effectiveFrom.toLowerCase().includes(".internal") || effectiveFrom.toLowerCase().endsWith("@internal")) {
+			try {
+				const db = getDb(env);
+				const [activeDomain] = await db
+					.select({ hostname: domains.hostname })
+					.from(domains)
+					.where(eq(domains.status, "active"))
+					.limit(1);
+				if (activeDomain?.hostname) {
+					effectiveFrom = `notifications@${activeDomain.hostname}`;
+				} else {
+					effectiveFrom = "onboarding@resend.dev";
+				}
+			} catch {
+				effectiveFrom = "onboarding@resend.dev";
+			}
+			headers["Reply-To"] = headers["Reply-To"] || payload.from;
+		}
+
 		const outboundMessage: OutboundProviderMessage = {
-			from: payload.from,
+			from: effectiveFrom,
 			to: payload.to,
 			cc: payload.cc.length > 0 ? payload.cc : undefined,
 			bcc: payload.bcc.length > 0 ? payload.bcc : undefined,
@@ -424,7 +444,17 @@ export async function sendSingleNormalizedMessage(
 			await flushBatchToD1([logEntry], env as any);
 		} catch {}
 
-		const error = new Error(failoverResult.message || "Email delivery failed across all candidate providers");
+		if ((failoverResult as any).queued) {
+			return {
+				id: failoverResult.deliveryId || newId("msg"),
+				messageId: failoverResult.deliveryId || newId("msg"),
+			};
+		}
+
+		const errorMsg =
+			(failoverResult as any)?.message ||
+			"Email delivery failed across all candidate providers";
+		const error = new Error(errorMsg);
 		(error as any).statusCode = 500;
 		(error as any).name = "delivery_failed";
 		throw error;
@@ -652,6 +682,7 @@ export async function processIngestionRequest(
 			{
 				id: primary.id,
 				messageId: primary.messageId,
+				status: (primary as any).status || "accepted",
 				scheduled: primary.scheduled,
 				scheduledAt: primary.scheduledAt,
 			},

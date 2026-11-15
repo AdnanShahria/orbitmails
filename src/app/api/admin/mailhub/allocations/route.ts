@@ -47,6 +47,42 @@ export async function GET(request: Request) {
 	try {
 		const state = await getMailHubState(access.env as any);
 
+		// Reconcile real-time usage from send logs if D1 is bound
+		if (access.env.DB) {
+			const dateBucket = new Date().toISOString().slice(0, 10);
+			const tables = ["email_router_send_logs", "send_log"];
+			for (const table of tables) {
+				try {
+					const usageRows = await access.env.DB.prepare(
+						`SELECT project_id, provider_cred_id, provider, COUNT(*) as count FROM ${table} WHERE date_bucket = ? AND status IN ('sent', 'delivered') GROUP BY project_id, provider_cred_id, provider`
+					).bind(dateBucket).all();
+
+					if (usageRows?.results && usageRows.results.length > 0) {
+						for (const row of usageRows.results as any[]) {
+							const rProj = String(row.project_id || "").toLowerCase();
+							const rProv = String(row.provider || "").toLowerCase();
+							const rCred = String(row.provider_cred_id || "").toLowerCase();
+							const count = Number(row.count || 0);
+
+							for (const alloc of state.allocations) {
+								const aProj = alloc.projectId.toLowerCase();
+								const aClean = aProj.replace(/^proj_/, "");
+								const aProv = alloc.providerId.toLowerCase();
+
+								if (
+									(aProj === rProj || aClean === rProj.replace(/^proj_/, "")) &&
+									(aProv === rCred || aProv === rProv || aProv.includes(rProv))
+								) {
+									alloc.usedToday = Math.max(alloc.usedToday, count);
+								}
+							}
+						}
+						break;
+					}
+				} catch {}
+			}
+		}
+
 		// Calculate aggregated sums for each provider
 		const providersWithStats = state.providers.map((prov) => {
 			const provAllocations = state.allocations.filter((a) => a.providerId === prov.id);

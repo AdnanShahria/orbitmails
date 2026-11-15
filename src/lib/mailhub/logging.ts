@@ -429,7 +429,18 @@ export function recordSendLogAsync(
 		return;
 	}
 
-	// 2. In-Memory Micro-Batch Buffer with ctx.waitUntil()
-	const buffer = getSendLogBuffer(env);
-	buffer.push(entry, ctx);
+	// 2. If ctx.waitUntil is available, use in-memory buffer with background flush
+	if (ctx?.waitUntil) {
+		const buffer = getSendLogBuffer(env);
+		buffer.push(entry, ctx);
+		return;
+	}
+
+	// 3. In serverless / API routes without ctx.waitUntil, flush directly to D1
+	// so the send log is committed immediately for dashboard queries without waiting on a frozen setTimeout
+	void flushBatchToD1([entry], env).catch((err) => {
+		console.warn("[MailHub Logging] Direct flush failed, buffering:", err);
+		const buffer = getSendLogBuffer(env);
+		buffer.push(entry);
+	});
 }

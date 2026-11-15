@@ -27,6 +27,17 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 			});
 		}
 
+		// Cloudflare Email Routing binding requires a real domain verified on Cloudflare.
+		// It cannot route external emails from internal/fake domains like notifications@fashion-doniya.internal.
+		const fromStr = typeof message.from === "string" ? message.from : (message.from as any)?.address || "";
+		if (fromStr.toLowerCase().includes(".internal") || fromStr.toLowerCase().endsWith("@internal")) {
+			throw new ProviderError({
+				message: `Cloudflare Email Routing cannot send from internal domain: "${fromStr}". Use a verified domain or external provider.`,
+				code: "INVALID_PAYLOAD",
+				provider: this.provider,
+			});
+		}
+
 		const startTime = performance.now();
 		const messageId = message.headers?.["Message-ID"] ?? mintMessageId(message.from);
 

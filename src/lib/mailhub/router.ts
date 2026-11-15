@@ -4,6 +4,7 @@
  */
 
 import { calculateProviderScore } from "./scoring";
+import { getMailHubState } from "./storage";
 import type {
 	CircuitBreakerState,
 	MailHubEnv,
@@ -88,14 +89,22 @@ export async function getRealtimeQuotaUsage(
 
 	// 4. D1 Database query fallback
 	if (env.DB) {
-		try {
-			const query = `SELECT COUNT(*) as count FROM send_log WHERE project_id = ? AND provider_cred_id = ? AND date_bucket = ? AND status = 'sent'`;
-			const res = await env.DB.prepare(query).bind(projectId, providerCredId, dateBucket).first();
-			if (res && typeof res.count === "number") {
-				return res.count;
+		for (const table of ["email_router_send_logs", "send_log"]) {
+			try {
+				const query = `SELECT COUNT(*) as count FROM ${table} WHERE (project_id = ? OR project_id = ?) AND (provider_cred_id = ? OR provider = ?) AND date_bucket = ? AND status IN ('sent', 'delivered')`;
+				const res = await env.DB.prepare(query).bind(
+					projectId,
+					projectId.replace(/^proj_/, ""),
+					providerCredId,
+					providerCredId.replace(/^cred_/, "").replace(/_.*$/, ""),
+					dateBucket
+				).first();
+				if (res && typeof res.count === "number") {
+					return res.count;
+				}
+			} catch {
+				// try next table
 			}
-		} catch {
-			// If table does not exist or query fails, assume 0
 		}
 	}
 
@@ -182,7 +191,65 @@ export async function resolveProjectAllocations(
 			});
 	}
 
-	// 2. Query from D1 Database
+	// 2. Query from MailHub state (D1 / KV / in-memory)
+	try {
+		const state = await getMailHubState(env);
+		const cleanId = projectId.replace(/^proj_/, "").toLowerCase();
+		const project = state.projects.find(
+			(p) =>
+				p.id.toLowerCase() === projectId.toLowerCase() ||
+				p.slug.toLowerCase() === projectId.toLowerCase() ||
+				p.slug.toLowerCase() === cleanId ||
+				p.id.toLowerCase() === `proj_${cleanId}`
+		);
+
+		if (project) {
+			const effectiveProjId = project.id;
+			const projAllocations = state.allocations.filter(
+				(a) =>
+					a.projectId.toLowerCase() === effectiveProjId.toLowerCase() ||
+					a.projectId.toLowerCase() === project.slug.toLowerCase() ||
+					a.projectId.toLowerCase() === cleanId
+			);
+
+			const result: Array<ProjectAllocation & { credential: ProviderCredential }> = [];
+			for (const alloc of projAllocations) {
+				const provConfig = state.providers.find(
+					(p) => p.id === alloc.providerId || p.provider === alloc.providerId
+				);
+				if (provConfig && provConfig.enabled) {
+					const priority =
+						project.providerOrder?.indexOf(provConfig.id) >= 0
+							? project.providerOrder.indexOf(provConfig.id) + 1
+							: alloc.priority || 1;
+
+					result.push({
+						projectId: effectiveProjId,
+						providerCredId: provConfig.id,
+						dailySlice: alloc.dailySlice,
+						priority,
+						credential: {
+							id: provConfig.id,
+							provider: provConfig.provider,
+							label: provConfig.label || provConfig.provider,
+							dailyLimit: provConfig.dailyLimit,
+							costPerK: provConfig.costPerK,
+							enabled: provConfig.enabled,
+						},
+					});
+				}
+			}
+
+			if (result.length > 0) {
+				result.sort((a, b) => a.priority - b.priority);
+				return result;
+			}
+		}
+	} catch (stateErr) {
+		console.warn("[MailHub Router] Failed to resolve allocations from state:", stateErr);
+	}
+
+	// 3. Query from D1 Database table if bound
 	if (env.DB) {
 		try {
 			const query = `
@@ -224,8 +291,7 @@ export async function resolveProjectAllocations(
 		}
 	}
 
-	// 3. Fallback: If no allocations found in DB, check environment bindings
-	// to avoid complete failure and allow seamless self-healing
+	// 4. Fallback: If no allocations found in state or DB, check environment bindings
 	const fallbackList: Array<ProjectAllocation & { credential: ProviderCredential }> = [];
 
 	if (env.BREVO_API_KEY) {

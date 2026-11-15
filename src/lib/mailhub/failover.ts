@@ -28,6 +28,7 @@ import {
 	getQuotaKey,
 	getTodayDateBucket,
 } from "./router";
+import { getMailHubState } from "./storage";
 import {
 	globalTelemetry,
 	type TelemetryHook,
@@ -122,10 +123,22 @@ export async function resolveCandidateCredentials(
 		}
 	}
 
-	// 4. Fallback to environment variables or appSettings based on provider type
+	// 4. Fallback to environment variables, state.providers, or appSettings based on provider type
 	const providerType = candidate.provider.toLowerCase();
 	const envAny = env as Record<string, any>;
 	const processEnv: Record<string, any> = typeof process !== "undefined" && process.env ? process.env : {};
+
+	try {
+		const state = await getMailHubState(env);
+		const prov = state.providers?.find(
+			(p) => p.id === candidate.providerCredId || p.provider.toLowerCase() === providerType
+		);
+		if (prov && (prov as any).apiKey) {
+			return { apiKey: (prov as any).apiKey, provider: prov.provider };
+		}
+	} catch {
+		// Fallback
+	}
 
 	switch (providerType) {
 		case "brevo": {

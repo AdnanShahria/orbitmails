@@ -47,7 +47,24 @@ export async function GET(request: Request) {
 						b.provider.toLowerCase() === provider.provider.toLowerCase() ||
 						b.provider.toLowerCase() === provider.id.toLowerCase()
 				);
-				const usedToday = pBreakdown?.sentCount || 0;
+				let usedToday = pBreakdown?.sentCount || 0;
+
+				if (usedToday === 0 && access.env.DB) {
+					const tables = ["email_router_send_logs", "send_log"];
+					for (const table of tables) {
+						try {
+							const row = await access.env.DB.prepare(
+								`SELECT COUNT(*) as count FROM ${table} WHERE (provider = ? OR provider_cred_id = ?) AND date_bucket = ? AND status IN ('sent', 'delivered')`
+							)
+								.bind(provider.provider.toLowerCase(), provider.id, realtimeSummary.todayDateBucket)
+								.first();
+							if (row && typeof row.count === "number" && row.count > 0) {
+								usedToday = row.count;
+								break;
+							}
+						} catch {}
+					}
+				}
 
 				let health: "active" | "circuit_broken" | "quota_reached" | "warning" = "active";
 				if (cbRecord.state === "open") {
@@ -94,7 +111,24 @@ export async function GET(request: Request) {
 			.filter((p) => p.enabled)
 			.reduce((acc, p) => acc + (p.dailyLimit || 0), 0);
 
-		const totalUsedToday = realtimeSummary.totalSentToday;
+		let totalUsedToday = realtimeSummary.totalSentToday;
+		if (totalUsedToday === 0 && access.env.DB) {
+			const tables = ["email_router_send_logs", "send_log"];
+			for (const table of tables) {
+				try {
+					const row = await access.env.DB.prepare(
+						`SELECT COUNT(*) as count FROM ${table} WHERE date_bucket = ? AND status IN ('sent', 'delivered')`
+					)
+						.bind(realtimeSummary.todayDateBucket)
+						.first();
+					if (row && typeof row.count === "number" && row.count > 0) {
+						totalUsedToday = row.count;
+						break;
+					}
+				} catch {}
+			}
+		}
+
 		const quotaUtilizationPct =
 			totalDailyCapacity > 0
 				? Math.round((totalUsedToday / totalDailyCapacity) * 1000) / 10
@@ -103,26 +137,46 @@ export async function GET(request: Request) {
 		// Calculate failovers triggered today from send logs if database exists
 		let failoversTriggeredToday = 0;
 		if (access.env.DB) {
-			try {
-				const row = await access.env.DB.prepare(
-					"SELECT COUNT(*) as count FROM email_router_send_logs WHERE date_bucket = ? AND (error_message IS NOT NULL OR status = 'failed')"
-				)
-					.bind(realtimeSummary.todayDateBucket)
-					.first();
-				if (row && typeof row.count === "number") {
-					failoversTriggeredToday = row.count;
-				}
-			} catch {
-				// email_router_send_logs might be empty or fallback
+			const tables = ["email_router_send_logs", "send_log"];
+			for (const table of tables) {
+				try {
+					const row = await access.env.DB.prepare(
+						`SELECT COUNT(*) as count FROM ${table} WHERE date_bucket = ? AND (error_message IS NOT NULL OR status = 'failed')`
+					)
+						.bind(realtimeSummary.todayDateBucket)
+						.first();
+					if (row && typeof row.count === "number") {
+						failoversTriggeredToday = row.count;
+						break;
+					}
+				} catch {}
+			}
+		}
+
+		let activeProjectsCount = state.projects.filter((p) => p.status === "active").length;
+		if (access.env.DB) {
+			const tables = ["email_router_send_logs", "send_log"];
+			for (const table of tables) {
+				try {
+					const distinct = await access.env.DB.prepare(
+						`SELECT DISTINCT project_id FROM ${table} WHERE date_bucket = ?`
+					)
+						.bind(realtimeSummary.todayDateBucket)
+						.all();
+					if (distinct?.results && distinct.results.length > 0) {
+						activeProjectsCount = Math.max(activeProjectsCount, distinct.results.length);
+						break;
+					}
+				} catch {}
 			}
 		}
 
 		const stats = {
-			totalSentToday: realtimeSummary.totalSentToday,
-			deliveredToday: realtimeSummary.totalSentToday,
+			totalSentToday: totalUsedToday,
+			deliveredToday: totalUsedToday,
 			failedToday: realtimeSummary.totalFailedToday,
 			failoversTriggeredToday,
-			activeProjects: state.projects.filter((p) => p.status === "active").length,
+			activeProjects: activeProjectsCount,
 			activeProviders: state.providers.filter((p) => p.enabled && p.configured).length,
 			averageLatencyMs: realtimeSummary.avgLatencyMsToday,
 			quotaUtilizationPct,

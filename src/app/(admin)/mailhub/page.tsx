@@ -69,7 +69,7 @@ export default function MailHubDashboardPage() {
   const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
   const [isAddProjectOpen, setIsAddProjectOpen] = useState(false);
   const [projectFilterForLogs, setProjectFilterForLogs] = useState<string | null>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(true);
 
   // 1. Fetch Real-Time Today Stats from Live API (rate-optimized to protect Cloudflare quotas)
   const {
@@ -96,9 +96,9 @@ export default function MailHubDashboardPage() {
         providers: any[];
       }>;
     },
-    refetchInterval: isStreaming ? 30000 : false,
+    refetchInterval: isStreaming ? 5000 : false,
     refetchIntervalInBackground: false,
-    staleTime: 15000,
+    staleTime: 4000,
   });
 
   // 2. Fetch Live Project Allocations (fetched on demand / mutation, no aggressive polling)
@@ -144,9 +144,9 @@ export default function MailHubDashboardPage() {
         };
       }>;
     },
-    refetchInterval: false,
+    refetchInterval: isStreaming ? 10000 : false,
     refetchIntervalInBackground: false,
-    staleTime: 60000,
+    staleTime: 8000,
   });
 
   // 3. Fetch Live Activity Stream from Ingestion / Send Logs (poll only when stream is active)
@@ -171,9 +171,9 @@ export default function MailHubDashboardPage() {
         activities: MailHubActivityItem[];
       }>;
     },
-    refetchInterval: isStreaming ? 30000 : false,
+    refetchInterval: isStreaming ? 5000 : false,
     refetchIntervalInBackground: false,
-    staleTime: 15000,
+    staleTime: 4000,
   });
 
   // Global manual refresh handler
@@ -268,9 +268,14 @@ export default function MailHubDashboardPage() {
       return allocationsResponse.projects.map((proj, idx) => {
         const visual = getProjectVisual(proj.name, idx);
 
-        const matchedKey = allocationsResponse.keys?.find((k) => k.projectId === proj.id);
+        const matchedKey = allocationsResponse.keys?.find(
+          (k) => k.projectId === proj.id || k.projectId.replace(/^proj_/, "") === proj.slug
+        );
         const projAllocations = (allocationsResponse.allocations || []).filter(
-          (a) => a.projectId === proj.id
+          (a) =>
+            a.projectId === proj.id ||
+            a.projectId === proj.slug ||
+            a.projectId.replace(/^proj_/, "") === proj.slug
         );
 
         const dailyQuotaSlice =

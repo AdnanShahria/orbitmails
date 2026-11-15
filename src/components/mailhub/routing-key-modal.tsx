@@ -153,7 +153,7 @@ export async function sendEmail({
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: process.env.ORBITMAIL_FROM || "notifications@${projectSlug}.com",
+      from: process.env.ORBITMAIL_FROM || "contact@orbitsaas.cloud",
       to: Array.isArray(to) ? to : [to],
       subject,
       html,
@@ -175,7 +175,7 @@ import requests
 def send_email(to, subject, html):
     url = os.getenv("ORBITMAIL_URL", "${hostUrl}/api/v1/send")
     api_key = os.environ["ORBITMAIL_API_KEY"]
-    from_addr = os.getenv("ORBITMAIL_FROM", "notifications@${projectSlug}.com")
+    from_addr = os.getenv("ORBITMAIL_FROM", "contact@orbitsaas.cloud")
 
     response = requests.post(
         url,
@@ -197,7 +197,7 @@ def send_email(to, subject, html):
   -H "Authorization: Bearer ${key}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "from": "notifications@${projectSlug}.com",
+    "from": "contact@orbitsaas.cloud",
     "to": ["user@example.com"],
     "subject": "Testing OrbitMail API",
     "html": "<p>Hello from OrbitMail!</p>"
@@ -205,7 +205,7 @@ def send_email(to, subject, html):
 
 	const envSnippet = (key: string) => `ORBITMAIL_API_KEY="${key}"
 ORBITMAIL_URL="${hostUrl}/api/v1/send"
-ORBITMAIL_FROM="notifications@${projectSlug}.com"`;
+ORBITMAIL_FROM="contact@orbitsaas.cloud"`;
 
 	const vercelSnippet = (key: string) => `# Option 1: Vercel CLI (Run in your terminal)
 vercel env add ORBITMAIL_API_KEY production
@@ -215,13 +215,13 @@ vercel env add ORBITMAIL_URL production
 # When prompted, paste: ${hostUrl}/api/v1/send
 
 vercel env add ORBITMAIL_FROM production
-# When prompted, paste: notifications@${projectSlug}.com
+# When prompted, paste: contact@orbitsaas.cloud
 
 # Option 2: Vercel Web Dashboard
 # Go to: Project -> Settings -> Environment Variables
 # Add: ORBITMAIL_API_KEY  = ${key}
 # Add: ORBITMAIL_URL      = ${hostUrl}/api/v1/send
-# Add: ORBITMAIL_FROM     = notifications@${projectSlug}.com
+# Add: ORBITMAIL_FROM     = contact@orbitsaas.cloud
 
 # Compatible with Vercel Serverless Functions, Server Components, Server Actions & Edge Middleware!`;
 
@@ -236,7 +236,7 @@ npx wrangler secret put ORBITMAIL_URL
 # Workers & Pages -> Your Project -> Settings -> Variables and Secrets
 # Add Secret: ORBITMAIL_API_KEY = ${key}
 # Add Variable: ORBITMAIL_URL = ${hostUrl}/api/v1/send
-# Add Variable: ORBITMAIL_FROM = notifications@${projectSlug}.com
+# Add Variable: ORBITMAIL_FROM = contact@orbitsaas.cloud
 
 # In Worker code:
 # await fetch(env.ORBITMAIL_URL, {
@@ -251,12 +251,12 @@ services:
     environment:
       - ORBITMAIL_API_KEY=${key}
       - ORBITMAIL_URL=${hostUrl}/api/v1/send
-      - ORBITMAIL_FROM=notifications@${projectSlug}.com
+      - ORBITMAIL_FROM=contact@orbitsaas.cloud
 
 # Option 2: Linux VPS / systemd / PM2 (/etc/environment or ecosystem.config.js)
 export ORBITMAIL_API_KEY="${key}"
 export ORBITMAIL_URL="${hostUrl}/api/v1/send"
-export ORBITMAIL_FROM="notifications@${projectSlug}.com"`;
+export ORBITMAIL_FROM="contact@orbitsaas.cloud"`;
 
 	const githubSnippet = (key: string) => `# In your repo: Settings -> Secrets and variables -> Actions
 # Secret: ORBITMAIL_API_KEY = ${key}
@@ -274,7 +274,7 @@ jobs:
         env:
           ORBITMAIL_API_KEY: \${{ secrets.ORBITMAIL_API_KEY }}
           ORBITMAIL_URL: \${{ secrets.ORBITMAIL_URL }}
-          ORBITMAIL_FROM: "notifications@${projectSlug}.com"
+          ORBITMAIL_FROM: "contact@orbitsaas.cloud"
         run: npm run deploy`;
 
 	const resendSnippet = (key: string) => `import { Resend } from "resend";
@@ -285,7 +285,7 @@ const resend = new Resend(process.env.ORBITMAIL_API_KEY, {
 });
 
 await resend.emails.send({
-  from: "notifications@${projectSlug}.com",
+  from: "contact@orbitsaas.cloud",
   to: "user@example.com",
   subject: "Welcome to ${projectName}!",
   html: "<p>Your email delivered through OrbitMail.</p>",
@@ -300,7 +300,7 @@ Please configure email delivery in this codebase with the following instructions
    Add these to \`.env\` and your deployment platform (Vercel, Cloudflare, Docker, or VPS):
    ORBITMAIL_API_KEY="${key}"
    ORBITMAIL_URL="${hostUrl}/api/v1/send"
-   ORBITMAIL_FROM="notifications@${projectSlug}.com"
+   ORBITMAIL_FROM="contact@orbitsaas.cloud"
 
 2. Integration Strategy (Zero external SDK required - Native Fetch):
    \`\`\`typescript
@@ -320,7 +320,7 @@ Please configure email delivery in this codebase with the following instructions
          "Content-Type": "application/json",
        },
        body: JSON.stringify({
-         from: process.env.ORBITMAIL_FROM || "notifications@${projectSlug}.com",
+         from: process.env.ORBITMAIL_FROM || "contact@orbitsaas.cloud",
          to: Array.isArray(to) ? to : [to],
          subject,
          html,

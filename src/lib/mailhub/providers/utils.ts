@@ -1,4 +1,40 @@
-import { getEmailAddress } from "@/lib/email/address";
+import { formatEmailAddress, getEmailAddress, parseEmailAddressParts } from "@/lib/email/address";
+
+export const CANONICAL_OUTBOUND_SENDER = "contact@orbitsaas.cloud";
+
+/**
+ * Rewrites any outbound sender to the canonical verified platform address
+ * (contact@orbitsaas.cloud) while keeping any display name and preserving a
+ * routable original sender in Reply-To when not already specified.
+ */
+export function resolveCanonicalOutboundSender(
+	from: string,
+	existingHeaders?: Record<string, string>,
+	canonicalAddress: string = CANONICAL_OUTBOUND_SENDER,
+): { from: string; originalAddress: string; headers: Record<string, string> } {
+	const raw = String(from || "").trim();
+	const parts = parseEmailAddressParts(raw);
+	const displayName = parts.name?.replace(/["\r\n]/g, "").trim() || null;
+	const originalAddress = (parts.address || getEmailAddress(raw)).trim().toLowerCase();
+	const headers: Record<string, string> = { ...(existingHeaders ?? {}) };
+
+	if (
+		originalAddress &&
+		originalAddress !== canonicalAddress.toLowerCase() &&
+		!originalAddress.endsWith(".internal") &&
+		!originalAddress.endsWith("@internal") &&
+		!headers["Reply-To"] &&
+		!headers["reply-to"]
+	) {
+		headers["Reply-To"] = originalAddress;
+	}
+
+	return {
+		from: formatEmailAddress(canonicalAddress, displayName),
+		originalAddress,
+		headers,
+	};
+}
 
 export function toBase64(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);

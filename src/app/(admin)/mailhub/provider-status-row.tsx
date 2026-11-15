@@ -131,10 +131,16 @@ export function ProviderStatusRow({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {providers.map((p) => {
+          const isConfigured = p.configured !== false;
           const quota = getQuotaProgressColor(p.usedToday, p.dailyLimit);
           const healthMeta = getProviderHealthMeta(p.health);
+          const badgeLabel = !isConfigured ? "Not Configured" : healthMeta.label;
+          const badgeClass = !isConfigured
+            ? "border-neutral-300/80 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+            : healthMeta.badgeClass;
+          const dotColor = !isConfigured ? "bg-neutral-400" : healthMeta.dotColor;
           const isPinging = pingingId === p.id;
           const isResetting = resettingId === p.id;
           const pingResult = pingFeedback[p.id];
@@ -165,14 +171,14 @@ export function ProviderStatusRow({
 
                   {/* Health status pill */}
                   <span
-                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-tight ${healthMeta.badgeClass}`}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-tight ${badgeClass}`}
                   >
                     <span
-                      className={`inline-block h-1.5 w-1.5 rounded-full ${healthMeta.dotColor} ${
-                        healthMeta.pulse ? "animate-pulse" : ""
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${dotColor} ${
+                        isConfigured && healthMeta.pulse ? "animate-pulse" : ""
                       }`}
                     />
-                    {healthMeta.label}
+                    {badgeLabel}
                   </span>
                 </div>
 

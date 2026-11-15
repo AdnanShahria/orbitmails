@@ -223,9 +223,8 @@ export async function GET(request: Request) {
 				const latencyMs = Number(row.latency_ms ?? row.latencyMs ?? 150);
 				const toAddress = String(row.to_address || row.toAddress || row.recipient || "user@example.com");
 				const subject = String(row.subject || "(No Subject)");
-				const fallbackDomain = projectSlug.includes("fashion") ? "fashion-doniya.com" : "orbitsaas.cloud";
 				const fromAddress =
-					row.from_address || row.fromAddress || `notifications@${fallbackDomain}`;
+					row.from_address || row.fromAddress || "contact@orbitsaas.cloud";
 				const messageId =
 					row.provider_message_id ||
 					row.providerMessageId ||

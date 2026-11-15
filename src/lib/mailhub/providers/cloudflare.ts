@@ -7,7 +7,7 @@ import type {
 	ProviderSendOptions,
 	ProviderSendResult,
 } from "./types";
-import { mintMessageId } from "./utils";
+import { CANONICAL_OUTBOUND_SENDER, mintMessageId, resolveCanonicalOutboundSender } from "./utils";
 
 export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredentials> {
 	readonly provider = "cloudflare" as const;
@@ -27,19 +27,13 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 			});
 		}
 
-		// Cloudflare Email Routing binding requires a real domain verified on Cloudflare.
-		// It cannot route external emails from internal/fake domains like notifications@fashion-doniya.internal.
-		const fromStr = typeof message.from === "string" ? message.from : (message.from as any)?.address || "";
-		if (fromStr.toLowerCase().includes(".internal") || fromStr.toLowerCase().endsWith("@internal")) {
-			throw new ProviderError({
-				message: `Cloudflare Email Routing cannot send from internal domain: "${fromStr}". Use a verified domain or external provider.`,
-				code: "INVALID_PAYLOAD",
-				provider: this.provider,
-			});
-		}
+		// Always rewrite outbound sender to canonical contact@orbitsaas.cloud (preserving display name & Reply-To)
+		const rawFrom = typeof message.from === "string" ? message.from : (message.from as any)?.address || "";
+		const canonical = resolveCanonicalOutboundSender(rawFrom, message.headers, CANONICAL_OUTBOUND_SENDER);
+		const normalizedHeaders = Object.keys(canonical.headers).length ? canonical.headers : undefined;
 
 		const startTime = performance.now();
-		const messageId = message.headers?.["Message-ID"] ?? mintMessageId(message.from);
+		const messageId = canonical.headers["Message-ID"] ?? mintMessageId(canonical.from);
 		const attachments = message.attachments?.map((attachment) =>
 			attachment.disposition === "inline" && attachment.contentId
 				? {
@@ -58,12 +52,12 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 		);
 
 		const sendPayload = {
-			from: message.from,
+			from: canonical.from,
 			to: message.to,
 			...(message.cc?.length ? { cc: message.cc } : {}),
 			...(message.bcc?.length ? { bcc: message.bcc } : {}),
 			subject: message.subject,
-			headers: message.headers && Object.keys(message.headers).length ? message.headers : undefined,
+			headers: normalizedHeaders,
 			html: message.html,
 			text: message.text,
 			attachments,
@@ -100,44 +94,31 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 					).first();
 					const verifiedHostname = row?.hostname ? String(row.hostname).trim().toLowerCase() : "";
 
-					const angleMatch = fromStr.match(/^(.*?)<([^>]+)>$/);
-					const displayName = (angleMatch?.[1] || "").replace(/["']/g, "").trim() || "OrbitMail";
-					const originalEmail = (angleMatch?.[2] || fromStr).trim().toLowerCase();
-					const [localPartRaw, currentDomain] = originalEmail.split("@");
-					const localPart = localPartRaw?.replace(/[^a-zA-Z0-9._+-]/g, "") || "notifications";
-
-					if (verifiedHostname && currentDomain !== verifiedHostname) {
-						const retryHeaders: Record<string, string> = {
-							...(message.headers ?? {}),
-							"Reply-To": message.headers?.["Reply-To"] || originalEmail,
+					if (verifiedHostname && !canonical.from.toLowerCase().includes(`@${verifiedHostname}`)) {
+						const fallbackCanonical = resolveCanonicalOutboundSender(
+							rawFrom,
+							message.headers,
+							`contact@${verifiedHostname}`,
+						);
+						const fallbackMsgId = fallbackCanonical.headers["Message-ID"] ?? mintMessageId(fallbackCanonical.from);
+						const retryRes = await emailBinding.send({
+							...sendPayload,
+							from: fallbackCanonical.from,
+							headers: Object.keys(fallbackCanonical.headers).length
+								? fallbackCanonical.headers
+								: undefined,
+						});
+						const latencyMs = Math.round(performance.now() - startTime);
+						const returnedId = retryRes?.messageId ?? fallbackMsgId;
+						return {
+							success: true,
+							provider: this.provider,
+							messageId: returnedId,
+							providerMessageId: returnedId,
+							timestamp: Date.now(),
+							latencyMs,
+							raw: retryRes,
 						};
-						const candidates = [
-							`"${displayName}" <${localPart}@${verifiedHostname}>`,
-							`"${displayName}" <cto@${verifiedHostname}>`,
-						];
-						for (const fallbackFrom of candidates) {
-							try {
-								const fallbackMsgId = message.headers?.["Message-ID"] ?? mintMessageId(fallbackFrom);
-								const retryRes = await emailBinding.send({
-									...sendPayload,
-									from: fallbackFrom,
-									headers: retryHeaders,
-								});
-								const latencyMs = Math.round(performance.now() - startTime);
-								const returnedId = retryRes?.messageId ?? fallbackMsgId;
-								return {
-									success: true,
-									provider: this.provider,
-									messageId: returnedId,
-									providerMessageId: returnedId,
-									timestamp: Date.now(),
-									latencyMs,
-									raw: retryRes,
-								};
-							} catch {
-								// try next verified Cloudflare sender address
-							}
-						}
 					}
 				} catch {
 					// Fall through to throw original provider error

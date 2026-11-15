@@ -71,8 +71,16 @@ export function ActivityFeed({
   }
 
   // Filter activities by project and search query
+  const normId = (val: string) =>
+    val.toLowerCase().replace(/^proj_/, "").replace(/[^a-z0-9]/g, "");
+
   const filteredActivities = activities.filter((item) => {
-    if (selectedProjectFilter && item.projectId !== selectedProjectFilter) {
+    if (
+      selectedProjectFilter &&
+      item.projectId !== selectedProjectFilter &&
+      normId(item.projectId) !== normId(selectedProjectFilter) &&
+      normId(item.projectName) !== normId(selectedProjectFilter)
+    ) {
       return false;
     }
     if (searchQuery.trim()) {
@@ -365,7 +373,7 @@ export function ActivityFeed({
                     <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 border-t border-neutral-100 pt-3.5 dark:border-neutral-800">
                       {/* Sender (From) with Badge & 1-Click Copy */}
                       {(() => {
-                        const fromVal = activeItem.fromAddress || `notifications@${activeItem.projectId.replace("proj_", "")}.com`;
+                        const fromVal = activeItem.fromAddress || "contact@orbitsaas.cloud";
                         return (
                           <div className="flex items-center justify-between rounded-2xl border border-neutral-200/80 bg-neutral-50/90 px-3.5 py-2.5 dark:border-neutral-750 dark:bg-neutral-800/70">
                             <div className="min-w-0 pr-2">
@@ -655,10 +663,22 @@ export function ActivityFeed({
                         ) : (
                           <div className="flex items-center justify-between rounded-2xl bg-neutral-50 px-3.5 py-2.5 dark:bg-neutral-800/60">
                             <span className="font-semibold text-neutral-800 dark:text-neutral-200">
-                              {getProviderDisplayName(activeItem.provider)} (Direct Delivery)
+                              {getProviderDisplayName(activeItem.provider)} (
+                              {activeItem.status === "failed" || activeItem.status === "bounced"
+                                ? "Delivery Failed"
+                                : "Direct Delivery"}
+                              )
                             </span>
-                            <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">
-                              HTTP 200 ({activeItem.latencyMs}ms)
+                            <span
+                              className={`font-mono font-bold ${
+                                activeItem.status === "failed" || activeItem.status === "bounced"
+                                  ? "text-rose-600 dark:text-rose-400"
+                                  : "text-emerald-600 dark:text-emerald-400"
+                              }`}
+                            >
+                              {activeItem.status === "failed" || activeItem.status === "bounced"
+                                ? `HTTP 502 (${activeItem.latencyMs}ms)`
+                                : `HTTP 200 (${activeItem.latencyMs}ms)`}
                             </span>
                           </div>
                         )}

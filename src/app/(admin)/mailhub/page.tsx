@@ -79,7 +79,7 @@ export default function MailHubDashboardPage() {
   } = useQuery({
     queryKey: ["mailhub-stats"],
     queryFn: async () => {
-      const res = await authFetch("/api/admin/mailhub/stats");
+      const res = await authFetch("/api/admin/mailhub/stats", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to fetch MailHub stats");
       return res.json() as Promise<{
         success: boolean;
@@ -109,7 +109,7 @@ export default function MailHubDashboardPage() {
   } = useQuery({
     queryKey: ["mailhub-allocations"],
     queryFn: async () => {
-      const res = await authFetch("/api/admin/mailhub/allocations");
+      const res = await authFetch("/api/admin/mailhub/allocations", { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to fetch MailHub allocations");
       return res.json() as Promise<{
         providers: any[];
@@ -164,7 +164,7 @@ export default function MailHubDashboardPage() {
       queryParams.set("limit", "50");
 
       const url = `/api/admin/mailhub/activities?${queryParams.toString()}`;
-      const res = await authFetch(url);
+      const res = await authFetch(url, { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to fetch MailHub activities");
       return res.json() as Promise<{
         success: boolean;
@@ -189,13 +189,14 @@ export default function MailHubDashboardPage() {
     const summary = allocationsResponse?.summary;
     const totalSent = raw?.totalSentToday ?? summary?.totalUsedToday ?? 0;
     const failed = raw?.failedToday ?? 0;
+    const totalAttempts = totalSent + failed;
     const deliveryRate =
-      totalSent > 0
-        ? Math.max(0, Math.min(100, Math.round(((totalSent - failed) / totalSent) * 100)))
+      totalAttempts > 0
+        ? Math.max(0, Math.min(100, Math.round((totalSent / totalAttempts) * 100)))
         : 100;
 
     const healthyCount = (statsResponse?.providers || []).filter(
-      (p: any) => p.health === "active"
+      (p: any) => p.health === "active" && p.configured !== false && p.enabled !== false
     ).length;
 
     return {
@@ -203,9 +204,10 @@ export default function MailHubDashboardPage() {
       sentDeltaPercent: 0,
       activeProjectsCount: raw?.activeProjects ?? allocationsResponse?.projects?.length ?? 0,
       totalProjectsCount: allocationsResponse?.projects?.length ?? 0,
-      healthyProvidersCount: healthyCount || (statsResponse?.providers?.length ?? 0),
+      healthyProvidersCount: healthyCount,
       totalProvidersCount: statsResponse?.providers?.length ?? 0,
       failoversTriggeredToday: raw?.failoversTriggeredToday ?? 0,
+      failedToday: failed,
       overallDeliveryRate: deliveryRate,
       avgLatencyMs: raw?.averageLatencyMs ?? 0,
     };
@@ -229,6 +231,8 @@ export default function MailHubDashboardPage() {
           dailyLimit: p.dailyLimit || 0,
           usedToday: p.usedToday || 0,
           health: p.health || "active",
+          configured: p.configured !== false,
+          enabled: p.enabled !== false,
           consecutiveFailures: p.consecutiveFailures || 0,
           maxStrikes: p.maxStrikes || 3,
           lastIncident: p.lastIncident || null,
@@ -241,7 +245,7 @@ export default function MailHubDashboardPage() {
     }
 
     // Default Provider Layout while query loads
-    const defaultIds: ProviderId[] = ["brevo", "resend", "ses", "zepto"];
+    const defaultIds: ProviderId[] = ["cloudflare", "brevo", "resend", "ses", "zepto"];
     return defaultIds.map((id) => {
       const brand = getProviderBrand(id);
       return {
@@ -251,6 +255,8 @@ export default function MailHubDashboardPage() {
         dailyLimit: 0,
         usedToday: 0,
         health: "active",
+        configured: false,
+        enabled: true,
         consecutiveFailures: 0,
         maxStrikes: 3,
         lastIncident: null,
@@ -262,29 +268,48 @@ export default function MailHubDashboardPage() {
     });
   }, [statsResponse]);
 
+  // Live Activities List
+  const activities: MailHubActivityItem[] = useMemo(() => {
+    return activitiesResponse?.activities || [];
+  }, [activitiesResponse]);
+
   // Derive Projects Table Data from Live Allocations and Keys
   const projects: MailHubProject[] = useMemo(() => {
+    const normProjId = (v: string) =>
+      v.toLowerCase().replace(/^proj_/, "").replace(/[^a-z0-9]/g, "");
+
     if (allocationsResponse?.projects && allocationsResponse.projects.length > 0) {
       return allocationsResponse.projects.map((proj, idx) => {
         const visual = getProjectVisual(proj.name, idx);
+        const targetNorm = normProjId(proj.id || proj.slug);
 
         const matchedKey = allocationsResponse.keys?.find(
-          (k) => k.projectId === proj.id || k.projectId.replace(/^proj_/, "") === proj.slug
+          (k) =>
+            k.projectId === proj.id ||
+            k.projectId === proj.slug ||
+            normProjId(k.projectId) === targetNorm
         );
         const projAllocations = (allocationsResponse.allocations || []).filter(
           (a) =>
             a.projectId === proj.id ||
             a.projectId === proj.slug ||
-            a.projectId.replace(/^proj_/, "") === proj.slug
+            normProjId(a.projectId) === targetNorm
         );
 
-        const dailyQuotaSlice =
-          projAllocations.reduce((sum, a) => sum + (a.dailySlice || 0), 0) || 75;
+        const dailyQuotaSlice = projAllocations.reduce(
+          (sum, a) => sum + (a.dailySlice || 0),
+          0
+        );
         const sentToday = projAllocations.reduce((sum, a) => sum + (a.usedToday || 0), 0);
+        const failoverCount = activities.filter(
+          (act) =>
+            act.wasFailover &&
+            (act.projectId === proj.id || normProjId(act.projectId) === targetNorm)
+        ).length;
 
         const primaryProvider = proj.providerOrder?.[0]
           ? normalizeProviderId(proj.providerOrder[0])
-          : "brevo";
+          : "cloudflare";
         const fallbackChain = (proj.providerOrder || []).slice(1).map(normalizeProviderId);
 
         return {
@@ -300,7 +325,7 @@ export default function MailHubDashboardPage() {
           fallbackChain: fallbackChain.length > 0 ? fallbackChain : ["resend", "ses", "zepto"],
           dailyQuotaSlice,
           sentToday,
-          failoverCount: 0,
+          failoverCount,
           status: (proj.status as any) || "active",
           brandColor: visual.brandColor,
           avatarInitials: visual.avatarInitials,
@@ -310,27 +335,28 @@ export default function MailHubDashboardPage() {
     }
 
     return [];
-  }, [allocationsResponse]);
-
-  // Live Activities List
-  const activities: MailHubActivityItem[] = useMemo(() => {
-    return activitiesResponse?.activities || [];
-  }, [activitiesResponse]);
+  }, [allocationsResponse, activities]);
 
   // Handlers for Live Actions
   const handleTestSendSuccess = () => {
     queryClient.invalidateQueries({ queryKey: ["mailhub-stats"] });
     queryClient.invalidateQueries({ queryKey: ["mailhub-activities"] });
     queryClient.invalidateQueries({ queryKey: ["mailhub-allocations"] });
+    void queryClient.refetchQueries({ queryKey: ["mailhub-stats"] });
+    void queryClient.refetchQueries({ queryKey: ["mailhub-activities"] });
+    void queryClient.refetchQueries({ queryKey: ["mailhub-allocations"] });
   };
 
   const handleResetBreaker = () => {
     queryClient.invalidateQueries({ queryKey: ["mailhub-stats"] });
+    void queryClient.refetchQueries({ queryKey: ["mailhub-stats"] });
   };
 
   const handleSaveSlices = () => {
     queryClient.invalidateQueries({ queryKey: ["mailhub-allocations"] });
     queryClient.invalidateQueries({ queryKey: ["mailhub-stats"] });
+    void queryClient.refetchQueries({ queryKey: ["mailhub-allocations"] });
+    void queryClient.refetchQueries({ queryKey: ["mailhub-stats"] });
   };
 
   const handleAddProject = async (data: {
@@ -505,6 +531,8 @@ export default function MailHubDashboardPage() {
         isOpen={isQuotaModalOpen}
         onClose={() => setIsQuotaModalOpen(false)}
         projects={projects}
+        providers={allocationsResponse?.providers || []}
+        allocations={allocationsResponse?.allocations || []}
         onSaveSlices={handleSaveSlices}
       />
 

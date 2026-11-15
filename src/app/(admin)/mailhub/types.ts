@@ -27,6 +27,8 @@ export type MailHubProvider = {
   dailyLimit: number;
   usedToday: number;
   health: ProviderHealth;
+  configured?: boolean;
+  enabled?: boolean;
   consecutiveFailures: number;
   maxStrikes: number;
   lastIncident: string | null;
@@ -75,6 +77,7 @@ export type MailHubSummaryStats = {
   healthyProvidersCount: number;
   totalProvidersCount: number;
   failoversTriggeredToday: number;
+  failedToday?: number;
   overallDeliveryRate: number;
   avgLatencyMs: number;
 };

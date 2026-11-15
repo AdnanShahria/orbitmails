@@ -120,16 +120,8 @@ export async function dispatchAlertEmail(
 		}
 	}
 
-	// Resolve sender identity
-	let fromAddress = "MailHub Alerts <noreply@orbitsaas.cloud>";
-	try {
-		const systemSender = await pickSystemSender(env);
-		if (systemSender) {
-			fromAddress = systemSender.name ? `"${systemSender.name} Monitoring" <${systemSender.address}>` : systemSender.address;
-		}
-	} catch {
-		// Use default
-	}
+	// Resolve sender identity (always deliver from canonical platform sender)
+	const fromAddress = "MailHub Alerts <contact@orbitsaas.cloud>";
 
 	const emailMessage = {
 		from: fromAddress,

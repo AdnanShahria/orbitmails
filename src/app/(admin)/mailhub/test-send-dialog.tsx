@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -34,7 +34,7 @@ export function TestSendDialog({
   project,
   onSuccessSend,
 }: TestSendDialogProps) {
-  const [recipient, setRecipient] = useState("developer@orbitmails.internal");
+  const [recipient, setRecipient] = useState("");
   const [subject, setSubject] = useState("MailHub Test Dispatch: Intelligent Failover Verification");
   const [senderAddress, setSenderAddress] = useState("");
   const [routingMode, setRoutingMode] = useState<"auto" | ProviderId>("auto");
@@ -48,6 +48,13 @@ export function TestSendDialog({
     deliveryId?: string;
     waterfall: Array<{ provider: string; status: number; message?: string; error?: string; latencyMs?: number }>;
   } | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setErrorMessage(null);
+      setResultTrace(null);
+    }
+  }, [isOpen, project?.id]);
 
   if (!isOpen || !project) return null;
 
@@ -199,14 +206,14 @@ export function TestSendDialog({
           <div>
             <div className="flex items-center justify-between">
               <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
-                Sender Address (From)
+                Reply-To / App Sender (Optional)
               </label>
-              <span className="text-[10px] text-neutral-400">Optional: verified domain or onboarding@resend.dev</span>
+              <span className="text-[10px] text-neutral-400">Recipients always receive from contact@orbitsaas.cloud</span>
             </div>
             <input
               type="email"
               value={senderAddress}
-              placeholder="e.g. onboarding@resend.dev or name@yourdomain.com"
+              placeholder="contact@orbitsaas.cloud (or custom Reply-To address)"
               onChange={(e) => setSenderAddress(e.target.value)}
               className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
@@ -219,8 +226,9 @@ export function TestSendDialog({
             <input
               type="email"
               value={recipient}
+              placeholder="recipient@example.com"
               onChange={(e) => setRecipient(e.target.value)}
-              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
 
@@ -367,7 +375,7 @@ export function TestSendDialog({
           <Button
             variant="default"
             size="sm"
-            disabled={isSending}
+            disabled={isSending || !recipient.trim() || !subject.trim()}
             onClick={handleExecuteTest}
             className="min-h-[44px] px-5 gap-2 rounded-xl bg-blue-600 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
           >

@@ -10,7 +10,7 @@ import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { sendWithFailover } from "@/lib/mailhub/failover";
 import { getMailHubState } from "@/lib/mailhub/storage";
 import { createSendLogEntry, recordSendLogAsync } from "@/lib/mailhub/logging";
-import { pickSystemSender } from "@/lib/email/system-mail";
+import { CANONICAL_OUTBOUND_SENDER, resolveCanonicalOutboundSender } from "@/lib/mailhub/providers/utils";
 import type { OutboundProviderMessage } from "@/lib/email/outbound-provider-types";
 import type { RoutingOptions } from "@/lib/mailhub/types";
 
@@ -67,54 +67,11 @@ export async function POST(request: Request) {
 		const projectName = project?.name || "MailHub Test Relay";
 		const projectSlug = project?.slug || data.projectId.replace(/^proj_/, "");
 
-		let fromAddress = data.senderAddress?.trim();
-		if (!fromAddress) {
-			try {
-				const sysSender = await pickSystemSender(access.env as any);
-				if (sysSender?.address) {
-					fromAddress = sysSender.address;
-				}
-			} catch {
-				// ignore
-			}
-		}
-
-		if (!fromAddress && access.env?.DB) {
-			try {
-				const db = getDb(access.env as any);
-				const [activeDomain] = await db
-					.select({ hostname: domains.hostname })
-					.from(domains)
-					.where(eq(domains.status, "active"))
-					.limit(1);
-				if (activeDomain?.hostname) {
-					fromAddress = `notifications@${activeDomain.hostname}`;
-				}
-			} catch {
-				// ignore
-			}
-		}
-
-		if (!fromAddress || fromAddress.endsWith(".internal")) {
-			if (access.env?.DB) {
-				try {
-					const db = getDb(access.env as any);
-					const [anyDomain] = await db
-						.select({ hostname: domains.hostname })
-						.from(domains)
-						.limit(1);
-					if (anyDomain?.hostname) {
-						fromAddress = `notifications@${anyDomain.hostname}`;
-					}
-				} catch {
-					// ignore
-				}
-			}
-		}
-
-		if (!fromAddress || fromAddress.endsWith(".internal")) {
-			fromAddress = "onboarding@resend.dev";
-		}
+		const requestedSender = data.senderAddress?.trim();
+		const canonicalSender = resolveCanonicalOutboundSender(
+			requestedSender ? `${projectName} <${requestedSender}>` : `${projectName} <${CANONICAL_OUTBOUND_SENDER}>`
+		);
+		const fromAddress = CANONICAL_OUTBOUND_SENDER;
 
 		const routingOptions: RoutingOptions = {};
 		if (data.routingMode && data.routingMode !== "auto") {
@@ -127,9 +84,10 @@ export async function POST(request: Request) {
 		}
 
 		const outboundMessage: OutboundProviderMessage = {
-			from: `${projectName} <${fromAddress}>`,
+			from: canonicalSender.from,
 			to: [data.recipient],
 			subject: data.subject,
+			headers: Object.keys(canonicalSender.headers).length ? canonicalSender.headers : undefined,
 			html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;">
   <h3 style="margin: 0 0 8px 0; color: #111827; font-size: 16px;">${data.subject}</h3>
   <p style="margin: 0 0 12px 0; color: #4b5563; font-size: 13px;">Test dispatch from OrbitMails MailHub engine.</p>

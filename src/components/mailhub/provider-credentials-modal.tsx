@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Check, KeyRound, Server, Settings } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,15 +49,25 @@ export function ProviderCredentialsModal({
 	provider,
 	onSaveProvider,
 }: ProviderCredentialsModalProps) {
-	if (!provider) return null;
-
-	const [dailyLimit, setDailyLimit] = useState(provider.dailyLimit);
+	const [dailyLimit, setDailyLimit] = useState(provider?.dailyLimit ?? 100);
 	const [apiKey, setApiKey] = useState("");
 	const [secretKey, setSecretKey] = useState("");
-	const [region, setRegion] = useState(provider.region || "us-east-1");
-	const [bounceAddress, setBounceAddress] = useState(provider.bounceAddress || "");
+	const [region, setRegion] = useState(provider?.region || "us-east-1");
+	const [bounceAddress, setBounceAddress] = useState(provider?.bounceAddress || "");
 	const [isSaving, setIsSaving] = useState(false);
 	const [savedSuccess, setSavedSuccess] = useState(false);
+
+	useEffect(() => {
+		if (!provider) return;
+		setDailyLimit(provider.dailyLimit);
+		setApiKey("");
+		setSecretKey("");
+		setRegion(provider.region || "us-east-1");
+		setBounceAddress(provider.bounceAddress || "");
+		setSavedSuccess(false);
+	}, [provider?.id, provider?.dailyLimit, provider?.region, provider?.bounceAddress, isOpen]);
+
+	if (!provider) return null;
 
 	const handleSave = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -119,25 +129,34 @@ export function ProviderCredentialsModal({
 						</p>
 					</div>
 
-					{/* API Key */}
-					<div className="space-y-1.5">
-						<Label htmlFor="provider-api-key" className="text-xs font-semibold">
-							{provider.provider === "ses" ? "AWS Access Key ID" : `${provider.provider.toUpperCase()} API Key`}
-						</Label>
-						<Input
-							id="provider-api-key"
-							type="password"
-							placeholder={provider.apiKeyMasked || "Paste new API Key..."}
-							value={apiKey}
-							onChange={(e) => setApiKey(e.target.value)}
-							className="h-9 font-mono text-xs"
-						/>
-						{provider.apiKeyMasked && (
-							<p className="text-[11px] text-neutral-400">
-								Currently configured: <code className="font-mono text-neutral-600 dark:text-neutral-300">{provider.apiKeyMasked}</code>
+					{/* API Key / Binding Notice */}
+					{provider.provider === "cloudflare" ? (
+						<div className="rounded-xl border border-blue-200/80 bg-blue-50/70 p-3 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+							<p className="font-semibold">Cloudflare Worker Email Binding</p>
+							<p className="mt-1 text-[11px] leading-relaxed opacity-90">
+								Cloudflare Email Routing uses the Worker <code className="font-mono">EMAIL</code> binding automatically. Recipients always receive mail from <code className="font-mono">contact@orbitsaas.cloud</code>.
 							</p>
-						)}
-					</div>
+						</div>
+					) : (
+						<div className="space-y-1.5">
+							<Label htmlFor="provider-api-key" className="text-xs font-semibold">
+								{provider.provider === "ses" ? "AWS Access Key ID" : `${provider.provider.toUpperCase()} API Key`}
+							</Label>
+							<Input
+								id="provider-api-key"
+								type="password"
+								placeholder={provider.apiKeyMasked || "Paste new API Key..."}
+								value={apiKey}
+								onChange={(e) => setApiKey(e.target.value)}
+								className="h-9 font-mono text-xs"
+							/>
+							{provider.apiKeyMasked && (
+								<p className="text-[11px] text-neutral-400">
+									Currently configured: <code className="font-mono text-neutral-600 dark:text-neutral-300">{provider.apiKeyMasked}</code>
+								</p>
+							)}
+						</div>
+					)}
 
 					{/* AWS SES Specifics */}
 					{provider.provider === "ses" && (

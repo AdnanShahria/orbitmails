@@ -51,7 +51,9 @@ export function StatsCards({ stats }: StatsCardsProps) {
         <div className="mt-3.5 flex items-center justify-between border-t border-neutral-100 pt-3 text-xs text-neutral-600 dark:border-neutral-800 dark:text-neutral-300 font-medium">
           <span>Avg latency: {stats.avgLatencyMs > 0 ? `${stats.avgLatencyMs}ms` : "--"}</span>
           <span className="font-semibold text-neutral-800 dark:text-neutral-200">
-            {stats.totalSentToday > 0 ? `${stats.overallDeliveryRate}% delivered` : "Ready"}
+            {stats.totalSentToday > 0 || (stats.failedToday ?? 0) > 0
+              ? `${stats.overallDeliveryRate}% delivered`
+              : "Ready"}
           </span>
         </div>
       </div>
@@ -104,8 +106,16 @@ export function StatsCards({ stats }: StatsCardsProps) {
 
         <div className="mt-3.5 flex items-center justify-between border-t border-neutral-100 pt-3 text-xs text-neutral-600 dark:border-neutral-800 dark:text-neutral-300 font-medium">
           <span>Active circuit checks</span>
-          <span className="text-emerald-700 dark:text-emerald-300 font-semibold">
-            All pools active
+          <span
+            className={`font-semibold ${
+              stats.healthyProvidersCount === stats.totalProvidersCount
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-amber-700 dark:text-amber-300"
+            }`}
+          >
+            {stats.healthyProvidersCount === stats.totalProvidersCount
+              ? "All pools active"
+              : `${stats.totalProvidersCount - stats.healthyProvidersCount} unconfigured / degraded`}
           </span>
         </div>
       </div>
@@ -125,16 +135,30 @@ export function StatsCards({ stats }: StatsCardsProps) {
           <span className="text-3xl font-bold tracking-tight text-neutral-900 tabular-nums dark:text-neutral-50">
             {stats.failoversTriggeredToday}
           </span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-            <CheckCircle2 className="h-3 w-3" />
-            100% Protected
-          </span>
+          {(stats.failedToday ?? 0) > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
+              {stats.failedToday} Failed Today
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <CheckCircle2 className="h-3 w-3" />
+              100% Protected
+            </span>
+          )}
         </div>
 
         <div className="mt-3.5 flex items-center justify-between border-t border-neutral-100 pt-3 text-xs text-neutral-600 dark:border-neutral-800 dark:text-neutral-300 font-medium">
           <span>Waterfall reroutes</span>
-          <span className="text-neutral-800 dark:text-neutral-200 font-semibold">
-            0 emails dropped
+          <span
+            className={`font-semibold ${
+              (stats.failedToday ?? 0) > 0
+                ? "text-rose-700 dark:text-rose-300"
+                : "text-neutral-800 dark:text-neutral-200"
+            }`}
+          >
+            {(stats.failedToday ?? 0) > 0
+              ? `${stats.failedToday} email${stats.failedToday === 1 ? "" : "s"} failed`
+              : "0 emails dropped"}
           </span>
         </div>
       </div>

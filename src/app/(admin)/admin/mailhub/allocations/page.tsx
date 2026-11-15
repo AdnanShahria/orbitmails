@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
 	Activity,
@@ -45,8 +45,11 @@ const FALLBACK_COLORS = [
 export default function MailHubAllocationsPage() {
 	const queryClient = useQueryClient();
 
+	const normProjId = (v: string) =>
+		v.toLowerCase().replace(/^proj_/, "").replace(/[^a-z0-9]/g, "");
+
 	// Active selected provider tab
-	const [activeProviderId, setActiveProviderId] = useState<string>("cred_brevo_main");
+	const [activeProviderId, setActiveProviderId] = useState<string>("");
 
 	// Local dirty slices state for real-time slider manipulation before save
 	const [localSlices, setLocalSlices] = useState<Record<string, Record<string, number>>>({});
@@ -62,7 +65,7 @@ export default function MailHubAllocationsPage() {
 	const { data, isLoading, isError, refetch } = useQuery({
 		queryKey: ["mailhub-allocations"],
 		queryFn: async () => {
-			const res = await authFetch("/api/admin/mailhub/allocations");
+			const res = await authFetch("/api/admin/mailhub/allocations", { cache: "no-store" });
 			if (!res.ok) throw new Error("Failed to load MailHub allocations");
 			return res.json() as Promise<{
 				providers: (ProviderConfigItem & {
@@ -99,6 +102,16 @@ export default function MailHubAllocationsPage() {
 		},
 	});
 
+	useEffect(() => {
+		if (!data?.providers || data.providers.length === 0) return;
+		if (activeProviderId && data.providers.some((p) => p.id === activeProviderId)) return;
+		const preferred =
+			data.providers.find((p) => p.configured && p.enabled) ||
+			data.providers.find((p) => p.enabled) ||
+			data.providers[0];
+		setActiveProviderId(preferred.id);
+	}, [data?.providers, activeProviderId]);
+
 	// Active Provider definition
 	const currentProvider = useMemo(() => {
 		if (!data?.providers) return null;
@@ -110,9 +123,14 @@ export default function MailHubAllocationsPage() {
 		if (!data || !currentProvider) return [];
 
 		return data.projects.map((proj, idx) => {
+			const targetNorm = normProjId(proj.id || proj.slug);
 			const color = PROJECT_COLORS[proj.id] || FALLBACK_COLORS[idx % FALLBACK_COLORS.length];
 			const serverAlloc = data.allocations.find(
-				(a) => a.providerId === currentProvider.id && a.projectId === proj.id
+				(a) =>
+					a.providerId === currentProvider.id &&
+					(a.projectId === proj.id ||
+						a.projectId === proj.slug ||
+						normProjId(a.projectId) === targetNorm)
 			);
 
 			const sliceValue =
@@ -148,7 +166,10 @@ export default function MailHubAllocationsPage() {
 			projectId: s.projectId,
 			projectName: s.projectName,
 			slice: s.slice,
-			percentage: Math.round((s.slice / currentProvider.dailyLimit) * 100),
+			percentage:
+				currentProvider.dailyLimit > 0
+					? Math.round((s.slice / currentProvider.dailyLimit) * 100)
+					: 0,
 			colorClass: s.colorClass,
 			textColorClass: s.textColorClass,
 		}));
@@ -431,10 +452,13 @@ export default function MailHubAllocationsPage() {
 					)}
 				</div>
 
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+				<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
 					{data?.providers.map((prov) => {
-						const isSelected = prov.id === activeProviderId;
-						const pct = Math.min(100, Math.round((prov.totalAllocated / prov.dailyLimit) * 100));
+						const isSelected = prov.id === (currentProvider?.id || activeProviderId);
+						const pct =
+							prov.dailyLimit > 0
+								? Math.min(100, Math.round((prov.totalAllocated / prov.dailyLimit) * 100))
+								: 0;
 
 						return (
 							<button
@@ -574,7 +598,14 @@ export default function MailHubAllocationsPage() {
 							enabled: p.enabled,
 						}));
 
-						const projKeys = (data.keys || []).filter((k) => k.projectId === proj.id && k.status === "active");
+						const targetNorm = normProjId(proj.id || proj.slug);
+						const projKeys = (data.keys || []).filter(
+							(k) =>
+								(k.projectId === proj.id ||
+									k.projectId === proj.slug ||
+									normProjId(k.projectId) === targetNorm) &&
+								k.status === "active"
+						);
 
 						return (
 							<div

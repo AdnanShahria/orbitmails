@@ -216,3 +216,43 @@ test("SesAdapter error classification", () => {
 	assert.equal(rejectParsed.code, "INVALID_PAYLOAD");
 	assert.equal(rejectParsed.suggestedAction, "REJECT_NO_FAILOVER");
 });
+
+test("resolveCanonicalOutboundSender and CloudflareEmailAdapter rewrite any sender to contact@orbitsaas.cloud", async () => {
+	const customSender = mailhub.resolveCanonicalOutboundSender(
+		"Fashion Doniya <notifications@fashion-doniya.com>",
+	);
+	assert.equal(customSender.from, '"Fashion Doniya" <contact@orbitsaas.cloud>');
+	assert.equal(customSender.headers["Reply-To"], "notifications@fashion-doniya.com");
+
+	const internalSender = mailhub.resolveCanonicalOutboundSender(
+		"notifications@fashion-doniya.internal",
+	);
+	assert.equal(internalSender.from, "contact@orbitsaas.cloud");
+	assert.equal(internalSender.headers["Reply-To"], undefined);
+
+	const sentPayloads = [];
+	const adapter = new mailhub.CloudflareEmailAdapter();
+	const result = await adapter.send(
+		{},
+		{
+			from: "Fashion Doniya <alerts@fashiondoniya.com>",
+			to: ["customer@example.com"],
+			subject: "Order #101",
+			text: "Confirmed",
+		},
+		undefined,
+		{
+			EMAIL: {
+				send: async (payload) => {
+					sentPayloads.push(payload);
+					return { messageId: "<cf-test@orbitsaas.cloud>" };
+				},
+			},
+		},
+	);
+
+	assert.equal(result.success, true);
+	assert.equal(sentPayloads.length, 1);
+	assert.equal(sentPayloads[0].from, '"Fashion Doniya" <contact@orbitsaas.cloud>');
+	assert.equal(sentPayloads[0].headers?.["Reply-To"], "alerts@fashiondoniya.com");
+});

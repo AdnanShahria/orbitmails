@@ -39,6 +39,7 @@ import {
 	createSendLogEntry,
 	flushBatchToD1,
 } from "@/lib/mailhub/logging";
+import { resolveCanonicalOutboundSender } from "@/lib/mailhub/providers/utils";
 import type { RankedProvider } from "@/lib/mailhub/types";
 import { normalizePayload } from "./normalizer";
 import {
@@ -276,36 +277,18 @@ export async function sendSingleNormalizedMessage(
 			effectiveCandidates = candidates.filter((c) => !c.dailySlice || c.dailySlice <= 0);
 		}
 
-		// 4c. Execute delivery via sendWithFailover
-		let effectiveFrom = payload.from;
-		if (effectiveFrom.toLowerCase().includes(".internal") || effectiveFrom.toLowerCase().endsWith("@internal")) {
-			try {
-				const db = getDb(env);
-				const [activeDomain] = await db
-					.select({ hostname: domains.hostname })
-					.from(domains)
-					.where(eq(domains.status, "active"))
-					.limit(1);
-				if (activeDomain?.hostname) {
-					effectiveFrom = `notifications@${activeDomain.hostname}`;
-				} else {
-					effectiveFrom = "onboarding@resend.dev";
-				}
-			} catch {
-				effectiveFrom = "onboarding@resend.dev";
-			}
-			headers["Reply-To"] = headers["Reply-To"] || payload.from;
-		}
+		// 4c. Execute delivery via sendWithFailover using canonical platform sender contact@orbitsaas.cloud
+		const canonicalSender = resolveCanonicalOutboundSender(payload.from, headers);
 
 		const outboundMessage: OutboundProviderMessage = {
-			from: effectiveFrom,
+			from: canonicalSender.from,
 			to: payload.to,
 			cc: payload.cc.length > 0 ? payload.cc : undefined,
 			bcc: payload.bcc.length > 0 ? payload.bcc : undefined,
 			subject: payload.subject,
 			html: payload.html,
 			text: payload.text,
-			headers,
+			headers: canonicalSender.headers,
 			attachments: payload.attachments.length > 0 ? payload.attachments : undefined,
 		};
 

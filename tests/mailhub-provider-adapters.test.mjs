@@ -399,3 +399,50 @@ test("resolveCandidateCredentials prioritizes server-side Worker env secrets", a
 	);
 	assert.equal(resendCreds.apiKey, "re_server_env");
 });
+
+test("CloudflareEmailAdapter falls back to CF REST API on unverified destination and preserves FAILOVER classification", async () => {
+	const adapter = new mailhub.CloudflareEmailAdapter();
+
+	// 1. parseError keeps unverified destination as TRANSIENT_SERVER_ERROR -> FAILOVER
+	const parsed = adapter.parseError(new Error("destination address is not a verified address"), 400);
+	assert.equal(parsed.code, "TRANSIENT_SERVER_ERROR");
+	assert.equal(parsed.suggestedAction, "FAILOVER");
+
+	// 2. When env.EMAIL.send() throws unverified destination and CF_ACCOUNT_ID + CF_TOKEN are present,
+	//    CloudflareEmailAdapter falls back to the Cloudflare Email Sending REST API.
+	const originalFetch = globalThis.fetch;
+	const fetchCalls = [];
+	globalThis.fetch = async (url, init) => {
+		fetchCalls.push({ url: String(url), init });
+		return new Response(JSON.stringify({ success: true }), { status: 200 });
+	};
+
+	try {
+		const res = await adapter.send(
+			{},
+			{
+				from: "Sender <hello@example.com>",
+				to: ["any-external-user@gmail.com"],
+				subject: "Unverified destination fallback",
+				text: "Delivered via REST fallback",
+			},
+			undefined,
+			{
+				EMAIL: {
+					send: async () => {
+						throw new Error("destination address is not a verified address");
+					},
+				},
+				CF_ACCOUNT_ID: "acct_cf_999",
+				CF_TOKEN: "cf_tok_999",
+			},
+		);
+
+		assert.equal(res.success, true);
+		assert.equal(res.provider, "cloudflare");
+		assert.equal(fetchCalls.length, 1);
+		assert.match(fetchCalls[0].url, /\/accounts\/acct_cf_999\/email\/sending\/send$/);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});

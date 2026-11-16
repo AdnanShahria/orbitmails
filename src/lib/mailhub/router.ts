@@ -4,7 +4,7 @@
  */
 
 import { calculateProviderScore } from "./scoring";
-import { getMailHubState } from "./storage";
+import { getMailHubState, type MailHubProviderConfig, type MailHubState } from "./storage";
 import type {
 	CircuitBreakerState,
 	MailHubEnv,
@@ -164,6 +164,99 @@ export async function getProviderHealth(
 	};
 }
 
+function hasUsableProviderConfig(provConfig: MailHubProviderConfig, env: MailHubEnv): boolean {
+	if (!provConfig.enabled || !provConfig.configured) return false;
+	const pType = provConfig.provider.toLowerCase();
+	const envAny = env as Record<string, any>;
+	const procEnv: Record<string, any> = typeof process !== "undefined" && process.env ? process.env : {};
+	const hasStoredKey = Boolean(provConfig.apiKeyEnc || (provConfig as any).apiKey);
+	switch (pType) {
+		case "brevo":
+			return hasStoredKey || Boolean(envAny.BREVO_API_KEY || procEnv.BREVO_API_KEY);
+		case "resend":
+			return hasStoredKey || Boolean(envAny.RESEND_API_KEY || procEnv.RESEND_API_KEY);
+		case "sendpulse":
+			return hasStoredKey || Boolean(envAny.SENDPULSE_API_KEY || procEnv.SENDPULSE_API_KEY);
+		case "zepto":
+		case "zeptomail":
+			return (
+				hasStoredKey ||
+				Boolean(
+					envAny.ZEPTOMAIL_API_KEY ||
+						envAny.ZEPTO_API_KEY ||
+						procEnv.ZEPTOMAIL_API_KEY ||
+						procEnv.ZEPTO_API_KEY,
+				)
+			);
+		case "mailgun":
+			return hasStoredKey || Boolean(envAny.MAILGUN_API_KEY || procEnv.MAILGUN_API_KEY);
+		case "ses":
+			return Boolean(
+				(hasStoredKey && (provConfig as any).secretKey) ||
+					((envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || procEnv.AWS_ACCESS_KEY_ID) &&
+						(envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || procEnv.AWS_SECRET_ACCESS_KEY)),
+			);
+		case "cloudflare":
+			return Boolean(
+				(envAny.EMAIL && typeof envAny.EMAIL.send === "function") ||
+					(envAny.CF_ACCOUNT_ID && envAny.CF_TOKEN) ||
+					(procEnv.CF_ACCOUNT_ID && procEnv.CF_TOKEN),
+			);
+		default:
+			return hasStoredKey;
+	}
+}
+
+function appendMissingConfiguredProviders(
+	target: Array<ProjectAllocation & { credential: ProviderCredential }>,
+	projectId: string,
+	state: MailHubState,
+	env: MailHubEnv,
+): void {
+	const existingCredIds = new Set(target.map((a) => a.providerCredId));
+	const existingProviders = new Set(target.map((a) => a.credential.provider.toLowerCase()));
+	const normTarget = projectId.trim().toLowerCase().replace(/^proj_/, "").replace(/[-_]/g, "");
+	let nextPriority = target.reduce((max, a) => Math.max(max, a.priority || 0), 0) + 1;
+
+	for (const provConfig of state.providers) {
+		if (!hasUsableProviderConfig(provConfig, env)) continue;
+		const pType = provConfig.provider.toLowerCase();
+		if (existingCredIds.has(provConfig.id) || existingProviders.has(pType)) continue;
+
+		const storedKey = provConfig.apiKeyEnc || (provConfig as any).apiKey;
+		const matchingStateAlloc = state.allocations.find(
+			(a) =>
+				(a.projectId.toLowerCase() === projectId.toLowerCase() ||
+					a.projectId.toLowerCase().replace(/^proj_/, "").replace(/[-_]/g, "") === normTarget) &&
+				a.providerId === provConfig.id,
+		);
+		const dailySlice =
+			matchingStateAlloc && matchingStateAlloc.dailySlice > 0
+				? matchingStateAlloc.dailySlice
+				: provConfig.dailyLimit || 300;
+
+		target.push({
+			projectId,
+			providerCredId: provConfig.id,
+			dailySlice,
+			priority: nextPriority++,
+			credential: {
+				id: provConfig.id,
+				provider: provConfig.provider,
+				label: provConfig.label || provConfig.provider,
+				...(storedKey ? { apiKeyEnc: storedKey } : {}),
+				...(provConfig.region ? { region: provConfig.region } : {}),
+				...(provConfig.bounceAddress ? { bounceAddress: provConfig.bounceAddress } : {}),
+				dailyLimit: provConfig.dailyLimit,
+				costPerK: provConfig.costPerK,
+				enabled: provConfig.enabled,
+			},
+		});
+		existingCredIds.add(provConfig.id);
+		existingProviders.add(pType);
+	}
+}
+
 /**
  * Resolves allocations and credential records for a given project.
  */
@@ -237,7 +330,7 @@ export async function resolveProjectAllocations(
 			`;
 			const { results } = await env.DB.prepare(query).bind(...idVariants).all();
 			if (results && results.length > 0) {
-				return results.map((row: any) => {
+				const d1Allocations: Array<ProjectAllocation & { credential: ProviderCredential }> = results.map((row: any) => {
 					let parsedCreds: Record<string, any> = {};
 					if (row.creds) {
 						try {
@@ -272,6 +365,15 @@ export async function resolveProjectAllocations(
 						},
 					};
 				});
+
+				try {
+					const state = await getMailHubState(env);
+					appendMissingConfiguredProviders(d1Allocations, results[0].projectId || projectId, state, env);
+				} catch {
+					// Keep authoritative D1 allocations if state lookup fails
+				}
+
+				return d1Allocations;
 			}
 		} catch {
 			// Fall through to MailHub state fallback
@@ -330,6 +432,8 @@ export async function resolveProjectAllocations(
 					});
 				}
 			}
+
+			appendMissingConfiguredProviders(result, effectiveProjId, state, env);
 
 			if (result.length > 0) {
 				result.sort((a, b) => a.priority - b.priority);

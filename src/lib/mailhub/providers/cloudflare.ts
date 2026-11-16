@@ -167,6 +167,31 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 				lowerErr.includes("too many requests") ||
 				lowerErr.includes("429");
 
+			if (emailBinding && !isRateLimit && cfAccountId && cfToken) {
+				try {
+					const restRes = await sendViaCloudflareRestApi(
+						cfAccountId,
+						cfToken,
+						sendPayload,
+						messageId,
+						options?.timeoutMs,
+					);
+					const latencyMs = Math.round(performance.now() - startTime);
+					const returnedId = restRes?.messageId ?? messageId;
+					return {
+						success: true,
+						provider: this.provider,
+						messageId: returnedId,
+						providerMessageId: returnedId,
+						timestamp: Date.now(),
+						latencyMs,
+						raw: restRes,
+					};
+				} catch {
+					// Fall through to verified hostname / provider error handling
+				}
+			}
+
 			if (!isRateLimit && env?.DB) {
 				try {
 					const row = await env.DB.prepare(
@@ -217,6 +242,9 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 		const lower = message.toLowerCase();
 
 		let code: ProviderErrorCode = "TRANSIENT_SERVER_ERROR";
+		const isUnverifiedDestination =
+			lower.includes("destination address is not a verified address") ||
+			lower.includes("not a verified address");
 
 		// 1. Quota / Burst limit exceeded
 		if (
@@ -238,7 +266,11 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 		) {
 			code = "AUTHENTICATION_ERROR";
 		}
-		// 3. Domain not verified / Invalid sender / Unverified destination
+		// 3. Unverified destination on Cloudflare Email Routing -> failover to transactional providers
+		else if (isUnverifiedDestination) {
+			code = "TRANSIENT_SERVER_ERROR";
+		}
+		// 4. Domain not verified / Invalid sender / Invalid recipient
 		else if (
 			lower.includes("not verified") ||
 			lower.includes("invalid sender") ||

@@ -2,16 +2,18 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSettings, domains } from "@/db/schema";
 import { requireAwsConfig } from "@/lib/aws/config";
-import { sendSesEmail } from "@/lib/aws/ses";
 import { getEmailAddress } from "@/lib/email/address";
 import type { OutboundProviderConfig, OutboundProviderMessage, ResendKeyStatus } from "@/lib/email/outbound-provider-types";
+import { getMailHubState } from "@/lib/mailhub/storage";
 import {
 	BrevoAdapter,
 	CloudflareEmailAdapter,
 	MailgunAdapter,
+	type MailHubProviderType,
 	ResendAdapter,
 	SesAdapter,
 	ZeptoMailAdapter,
+	resolveCanonicalOutboundSender,
 	sendWithAdapter,
 	shouldFailover,
 } from "@/lib/mailhub/providers";
@@ -67,11 +69,278 @@ export async function getOutboundProviderConfig(env: CloudflareEnv, fromAddress:
 		? await getDb(env).select({ provider: domains.sendingProvider }).from(domains).where(eq(domains.hostname, hostname)).limit(1)
 		: [];
 	if (!domain || domain.provider === "none") {
+		const fallbacks = await resolveConfiguredMailHubFallbacks(env);
+		if (fallbacks.length > 0) {
+			return { provider: "cloudflare" };
+		}
 		throw new Error(`Sending is not set up for ${hostname ?? "this domain"}. Choose a sending provider on the Domains page or configure BREVO_API_KEY / ZEPTOMAIL_API_KEY.`);
 	}
 	if (domain.provider === "resend") return { provider: "resend", apiKey: await getResendApiKey(env) };
 	if (domain.provider === "ses") return { provider: "ses", config: await requireAwsConfig(env) };
 	return { provider: "cloudflare" };
+}
+
+type FallbackCandidate = {
+	provider: Exclude<MailHubProviderType, "cloudflare">;
+	credentials: Record<string, any>;
+};
+
+const FALLBACK_PROVIDER_ORDER: Array<FallbackCandidate["provider"]> = [
+	"brevo",
+	"resend",
+	"sendpulse",
+	"zeptomail",
+	"mailgun",
+	"ses",
+];
+
+function normalizeFallbackProvider(raw: string): FallbackCandidate["provider"] | null {
+	const lower = raw.trim().toLowerCase();
+	if (lower === "zepto" || lower === "zeptomail") return "zeptomail";
+	if (
+		lower === "brevo" ||
+		lower === "resend" ||
+		lower === "sendpulse" ||
+		lower === "mailgun" ||
+		lower === "ses"
+	) {
+		return lower;
+	}
+	return null;
+}
+
+export async function resolveConfiguredMailHubFallbacks(env: CloudflareEnv): Promise<FallbackCandidate[]> {
+	const envAny = env as unknown as Record<string, any>;
+	const procEnv: Record<string, string | undefined> =
+		typeof process !== "undefined" && process.env ? process.env : {};
+	const byProvider = new Map<FallbackCandidate["provider"], Record<string, any>>();
+
+	const register = (provider: FallbackCandidate["provider"] | null, credentials: Record<string, any> | null) => {
+		if (!provider || !credentials || byProvider.has(provider)) return;
+		byProvider.set(provider, credentials);
+	};
+
+	// 1. Environment variables / Worker secrets
+	const brevoKey = String(envAny.BREVO_API_KEY || procEnv.BREVO_API_KEY || "").trim();
+	if (brevoKey) register("brevo", { apiKey: brevoKey });
+
+	const resendKey = String(envAny.RESEND_API_KEY || procEnv.RESEND_API_KEY || "").trim();
+	if (resendKey) register("resend", { apiKey: resendKey });
+
+	const sendpulseKey = String(envAny.SENDPULSE_API_KEY || procEnv.SENDPULSE_API_KEY || "").trim();
+	if (sendpulseKey) register("sendpulse", { apiKey: sendpulseKey });
+
+	const zeptoKey = String(
+		envAny.ZEPTOMAIL_API_KEY || envAny.ZEPTO_API_KEY || procEnv.ZEPTOMAIL_API_KEY || procEnv.ZEPTO_API_KEY || "",
+	).trim();
+	if (zeptoKey) {
+		register("zeptomail", {
+			sendMailToken: zeptoKey,
+			bounceAddress: envAny.ZEPTOMAIL_BOUNCE_ADDRESS || procEnv.ZEPTOMAIL_BOUNCE_ADDRESS,
+		});
+	}
+
+	const mailgunKey = String(envAny.MAILGUN_API_KEY || procEnv.MAILGUN_API_KEY || "").trim();
+	if (mailgunKey) {
+		register("mailgun", {
+			apiKey: mailgunKey,
+			domain: envAny.MAILGUN_DOMAIN || procEnv.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
+			region: envAny.MAILGUN_REGION || procEnv.MAILGUN_REGION || "us",
+		});
+	}
+
+	const awsKeyId = String(envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || procEnv.AWS_ACCESS_KEY_ID || "").trim();
+	const awsSecret = String(
+		envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || procEnv.AWS_SECRET_ACCESS_KEY || "",
+	).trim();
+	if (awsKeyId && awsSecret) {
+		register("ses", {
+			accessKeyId: awsKeyId,
+			secretAccessKey: awsSecret,
+			region: String(envAny.AWS_REGION || envAny.S3_REGION || procEnv.AWS_REGION || "us-east-1").trim(),
+		});
+	}
+
+	// 2. D1 provider_credentials table
+	const d1Db = (env as unknown as { DB?: D1Database }).DB;
+	if (d1Db) {
+		try {
+			const res = await d1Db
+				.prepare("SELECT provider, credentials_encrypted as creds, enabled FROM provider_credentials WHERE enabled = 1")
+				.all();
+			for (const row of (res?.results ?? []) as Array<{ provider?: string; creds?: unknown }>) {
+				const prov = normalizeFallbackProvider(String(row.provider || ""));
+				if (!prov || !row.creds) continue;
+				let parsed: Record<string, any> = {};
+				try {
+					const raw = typeof row.creds === "string" ? JSON.parse(row.creds) : row.creds;
+					if (raw && typeof raw === "object") parsed = raw;
+					else if (typeof raw === "string" && raw.trim()) parsed = { apiKey: raw.trim() };
+				} catch {
+					if (typeof row.creds === "string" && row.creds.trim()) parsed = { apiKey: row.creds.trim() };
+				}
+				if (prov === "zeptomail") {
+					const token = String(parsed.sendMailToken || parsed.apiKey || "").trim();
+					if (token) register("zeptomail", { sendMailToken: token, bounceAddress: parsed.bounceAddress });
+				} else if (prov === "ses") {
+					const accessKeyId = String(parsed.accessKeyId || parsed.apiKey || "").trim();
+					const secretAccessKey = String(parsed.secretAccessKey || "").trim();
+					if (accessKeyId && secretAccessKey) {
+						register("ses", {
+							accessKeyId,
+							secretAccessKey,
+							region: String(parsed.region || "us-east-1").trim(),
+						});
+					}
+				} else if (prov === "mailgun") {
+					const apiKey = String(parsed.apiKey || "").trim();
+					if (apiKey) {
+						register("mailgun", {
+							apiKey,
+							domain: parsed.domain || envAny.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
+							region: parsed.region || envAny.MAILGUN_REGION || "us",
+						});
+					}
+				} else {
+					const apiKey = String(parsed.apiKey || "").trim();
+					if (apiKey) register(prov, { apiKey });
+				}
+			}
+		} catch {
+			// provider_credentials table may not exist
+		}
+
+		// 3. D1 app_settings (Resend / AWS SES)
+		try {
+			const [settings] = await getDb(env)
+				.select({ resendApiKey: appSettings.resendApiKey, awsConfig: appSettings.awsConfig })
+				.from(appSettings)
+				.where(eq(appSettings.id, "default"))
+				.limit(1);
+			if (settings?.resendApiKey?.trim()) {
+				register("resend", { apiKey: settings.resendApiKey.trim() });
+			}
+			if (settings?.awsConfig) {
+				const parsedAws =
+					typeof settings.awsConfig === "string" ? JSON.parse(settings.awsConfig) : settings.awsConfig;
+				if (parsedAws?.accessKeyId && parsedAws?.secretAccessKey) {
+					register("ses", {
+						accessKeyId: String(parsedAws.accessKeyId).trim(),
+						secretAccessKey: String(parsedAws.secretAccessKey).trim(),
+						region: String(parsedAws.region || "us-east-1").trim(),
+					});
+				}
+			}
+		} catch {
+			// app_settings query best-effort
+		}
+	}
+
+	// 4. MailHub state (KV / D1 mailhub_state / memory)
+	try {
+		const state = await getMailHubState(env as any);
+		for (const provConfig of state.providers || []) {
+			if (!provConfig.enabled) continue;
+			const prov = normalizeFallbackProvider(provConfig.provider);
+			if (!prov) continue;
+			const rawKey = String(provConfig.apiKeyEnc || (provConfig as any).apiKey || "").trim();
+			if (!rawKey) continue;
+			if (prov === "zeptomail") {
+				register("zeptomail", { sendMailToken: rawKey, bounceAddress: provConfig.bounceAddress });
+			} else if (prov === "ses") {
+				const secretKey = String((provConfig as any).secretKey || "").trim();
+				if (secretKey) {
+					register("ses", {
+						accessKeyId: rawKey,
+						secretAccessKey: secretKey,
+						region: provConfig.region || "us-east-1",
+					});
+				}
+			} else if (prov === "mailgun") {
+				register("mailgun", {
+					apiKey: rawKey,
+					domain: (provConfig as any).domain || envAny.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
+					region: (provConfig as any).region || envAny.MAILGUN_REGION || "us",
+				});
+			} else {
+				register(prov, { apiKey: rawKey });
+			}
+		}
+	} catch {
+		// MailHub state lookup best-effort
+	}
+
+	return FALLBACK_PROVIDER_ORDER.filter((p) => byProvider.has(p)).map((p) => ({
+		provider: p,
+		credentials: byProvider.get(p)!,
+	}));
+}
+
+function isSenderRejectionError(error: unknown): boolean {
+	const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+	return (
+		msg.includes("not verified") ||
+		msg.includes("unverified") ||
+		msg.includes("invalid_from_address") ||
+		msg.includes("domain_not_verified") ||
+		msg.includes("invalid sender") ||
+		(msg.includes("sender") && (msg.includes("valid") || msg.includes("verify") || msg.includes("reject")))
+	);
+}
+
+async function tryMailHubFallbacks(
+	env: CloudflareEnv,
+	message: OutboundProviderMessage,
+	idempotencyKey?: string,
+	excludeProviders: MailHubProviderType[] = [],
+): Promise<{ messageId: string } | null> {
+	const excluded = new Set(excludeProviders.map((p) => p.toLowerCase()));
+	const candidates = (await resolveConfiguredMailHubFallbacks(env)).filter(
+		(c) => !excluded.has(c.provider.toLowerCase()),
+	);
+	if (candidates.length === 0) return null;
+
+	const canonical = resolveCanonicalOutboundSender(message.from, message.headers);
+	const canRetryCanonical =
+		canonical.from &&
+		getEmailAddress(canonical.from).toLowerCase() !== getEmailAddress(message.from).toLowerCase();
+
+	for (const candidate of candidates) {
+		try {
+			const res = await sendWithAdapter(
+				candidate.provider,
+				candidate.credentials,
+				message,
+				{ idempotencyKey },
+				env,
+			);
+			return { messageId: res.messageId };
+		} catch (err) {
+			if (canRetryCanonical && isSenderRejectionError(err)) {
+				try {
+					const canonicalMessage: OutboundProviderMessage = {
+						...message,
+						from: canonical.from,
+						headers: Object.keys(canonical.headers).length ? canonical.headers : message.headers,
+					};
+					const retryRes = await sendWithAdapter(
+						candidate.provider,
+						candidate.credentials,
+						canonicalMessage,
+						{ idempotencyKey },
+						env,
+					);
+					return { messageId: retryRes.messageId };
+				} catch (retryErr) {
+					console.warn(`[Orbitmails] Fallback provider ${candidate.provider} canonical retry failed:`, retryErr);
+				}
+			} else {
+				console.warn(`[Orbitmails] Fallback provider ${candidate.provider} failed:`, err);
+			}
+		}
+	}
+
+	return null;
 }
 
 // Legacy helper adapters for backward compatibility
@@ -133,48 +402,109 @@ export async function sendThroughProvider(
 						return { messageId: result.messageId };
 					} catch (zeptoError) {
 						console.error("[Orbitmails] ZeptoMail fallback delivery also failed:", zeptoError);
+						if (shouldFailover(zeptoError)) {
+							const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["brevo", "zeptomail"]);
+							if (fallbackResult) return fallbackResult;
+						}
 						throw new Error(
 							`Both primary (Brevo) and fallback (ZeptoMail) failed to send.\nBrevo: ${(brevoError as Error).message}\nZeptoMail: ${(zeptoError as Error).message}`
 						);
 					}
 				}
+				if (shouldFailover(brevoError)) {
+					const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["brevo"]);
+					if (fallbackResult) return fallbackResult;
+				}
 				throw brevoError;
 			}
 		}
 		if (config.zeptoApiKey) {
-			const result = await sendWithAdapter(
-				"zeptomail",
-				{ sendMailToken: config.zeptoApiKey, bounceAddress: config.zeptoBounceAddress },
-				message,
-				{ idempotencyKey },
-				env,
-			);
-			return { messageId: result.messageId };
+			try {
+				const result = await sendWithAdapter(
+					"zeptomail",
+					{ sendMailToken: config.zeptoApiKey, bounceAddress: config.zeptoBounceAddress },
+					message,
+					{ idempotencyKey },
+					env,
+				);
+				return { messageId: result.messageId };
+			} catch (zeptoError) {
+				if (shouldFailover(zeptoError)) {
+					const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["zeptomail"]);
+					if (fallbackResult) return fallbackResult;
+				}
+				throw zeptoError;
+			}
 		}
 		throw new Error("Neither Brevo nor ZeptoMail API keys are configured for sending.");
 	}
 
 	if (config.provider === "resend") {
-		const result = await sendWithAdapter("resend", { apiKey: config.apiKey }, message, { idempotencyKey }, env);
-		return { messageId: result.messageId };
+		try {
+			const result = await sendWithAdapter("resend", { apiKey: config.apiKey }, message, { idempotencyKey }, env);
+			return { messageId: result.messageId };
+		} catch (resendError) {
+			if (shouldFailover(resendError)) {
+				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["resend"]);
+				if (fallbackResult) return fallbackResult;
+			}
+			throw resendError;
+		}
 	}
 
 	if (config.provider === "ses") {
-		const result = await sendWithAdapter("ses", config.config, message, { idempotencyKey }, env);
-		return { messageId: result.messageId };
+		try {
+			const result = await sendWithAdapter("ses", config.config, message, { idempotencyKey }, env);
+			return { messageId: result.messageId };
+		} catch (sesError) {
+			if (shouldFailover(sesError)) {
+				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["ses"]);
+				if (fallbackResult) return fallbackResult;
+			}
+			throw sesError;
+		}
 	}
 
 	if (config.provider === "mailgun") {
-		const result = await sendWithAdapter(
-			"mailgun",
-			{ apiKey: config.apiKey, domain: config.domain, region: config.region },
-			message,
-			{ idempotencyKey },
-			env,
-		);
-		return { messageId: result.messageId };
+		try {
+			const result = await sendWithAdapter(
+				"mailgun",
+				{ apiKey: config.apiKey, domain: config.domain, region: config.region },
+				message,
+				{ idempotencyKey },
+				env,
+			);
+			return { messageId: result.messageId };
+		} catch (mailgunError) {
+			if (shouldFailover(mailgunError)) {
+				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["mailgun"]);
+				if (fallbackResult) return fallbackResult;
+			}
+			throw mailgunError;
+		}
 	}
 
-	const result = await sendWithAdapter("cloudflare", {}, message, { idempotencyKey }, env);
-	return { messageId: result.messageId };
+	try {
+		const result = await sendWithAdapter("cloudflare", {}, message, { idempotencyKey }, env);
+		return { messageId: result.messageId };
+	} catch (cfError) {
+		const cfErrMsg = cfError instanceof Error ? cfError.message : String(cfError);
+		const lowerMsg = cfErrMsg.toLowerCase();
+		const isUnverifiedDestination =
+			lowerMsg.includes("destination address is not a verified address") ||
+			lowerMsg.includes("not a verified address");
+
+		if (shouldFailover(cfError) || isUnverifiedDestination || (cfError as { code?: string })?.code === "AUTHENTICATION_ERROR") {
+			const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["cloudflare"]);
+			if (fallbackResult) return fallbackResult;
+		}
+
+		if (isUnverifiedDestination) {
+			throw new Error(
+				"[MailHub:CLOUDFLARE] TRANSIENT_SERVER_ERROR: destination address is not a verified address — Cloudflare's free send_email binding only delivers to verified destination addresses in your Cloudflare account. Configure an outbound provider (Brevo, Resend, SendPulse, ZeptoMail, or SES) in MailHub Provider Keys to send to any email address.",
+			);
+		}
+
+		throw cfError;
+	}
 }

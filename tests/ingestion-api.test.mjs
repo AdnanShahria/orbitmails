@@ -30,6 +30,7 @@ const normalizerModule = await bundle("src/lib/ingestion/normalizer.ts", "normal
 const validatorsModule = await bundle("src/lib/ingestion/validators.ts", "validators.mjs");
 const authModule = await bundle("src/lib/ingestion/auth.ts", "auth.mjs");
 const serviceModule = await bundle("src/lib/ingestion/service.ts", "service.mjs");
+const sendModule = await bundle("src/lib/email/send.ts", "send.mjs");
 const sqliteModule = await bundle("server/runtime/sqlite-database.ts", "sqlite-db.mjs");
 const migrateModule = await bundle("server/runtime/migrate.ts", "migrate.mjs");
 const keysModule = await bundle("src/lib/router/keys.ts", "keys.mjs");
@@ -61,6 +62,8 @@ const {
 	sendSingleNormalizedMessage,
 	processIngestionRequest,
 } = serviceModule;
+
+const { sendEmail } = sendModule;
 
 test("WP-07: Ingestion API Key Extraction from Multiple SDK Header Styles", () => {
 	// 1. Resend SDK: Authorization: Bearer om_live_...
@@ -764,4 +767,70 @@ test("WP-07 / MailHub: Legacy API key (without auth.projectId) preserves sendEma
 	const message = database.db.prepare("SELECT * FROM messages WHERE id = ?").get(result.id);
 	assert.ok(message, "Message should be saved in messages table");
 	assert.strictEqual(message.status, "sent");
+});
+
+test("Webmail sendEmail on Cloudflare domain fails over to configured MailHub provider on unverified destination", async (t) => {
+	const database = await setupTestDb();
+	t.after(() => database.db.close());
+
+	// Switch dom_aurelia to Cloudflare sending and remove D1 brevo/resend creds so we test SendPulse fallback too
+	database.db.exec(`
+		UPDATE domains SET sending_provider = 'cloudflare' WHERE id = 'dom_aurelia';
+		DELETE FROM provider_credentials;
+		INSERT INTO provider_credentials (id, provider, label, credentials_encrypted, daily_limit, cost_per_k, enabled)
+		VALUES ('cred_sendpulse_1', 'sendpulse', 'SendPulse SMTP', '{"apiKey":"sp_apikey_fallback_test"}', 500, 0, 1);
+	`);
+
+	const mockKv = createMockKv();
+	let cfBindingCalled = false;
+	const env = {
+		DB: database,
+		KV: mockKv,
+		ROUTER_KV: mockKv,
+		EMAIL: {
+			send: async () => {
+				cfBindingCalled = true;
+				throw new Error("destination address is not a verified address");
+			},
+		},
+	};
+
+	const originalFetch = globalThis.fetch;
+	t.after(() => { globalThis.fetch = originalFetch; });
+
+	let sendpulseCalled = false;
+	let sentRecipient = null;
+	globalThis.fetch = async (url, init) => {
+		const urlStr = String(url);
+		if (urlStr.includes("api.sendpulse.com/smtp/emails")) {
+			sendpulseCalled = true;
+			const parsed = JSON.parse(String(init?.body || "{}"));
+			sentRecipient = parsed?.email?.to?.[0]?.email;
+			return new Response(JSON.stringify({ result: true, id: "sp-fallback-msg-001" }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+		return new Response("Not found", { status: 404 });
+	};
+
+	const result = await sendEmail(env, {
+		userId: "user_aurelia",
+		mailboxId: "mbx_aurelia",
+		from: "onboarding@aurelia.com",
+		to: "arbitrary-customer@gmail.com",
+		subject: "Delivery to any external address",
+		html: "<p>Should succeed via failover!</p>",
+		text: "Should succeed via failover!",
+	});
+
+	assert.ok(result.messageId.startsWith("msg_"), "Expected stored message id");
+	assert.strictEqual(cfBindingCalled, true, "Cloudflare EMAIL binding should be attempted first");
+	assert.strictEqual(sendpulseCalled, true, "Should automatically fail over to configured SendPulse provider");
+	assert.strictEqual(sentRecipient, "arbitrary-customer@gmail.com");
+
+	const saved = database.db.prepare("SELECT * FROM messages WHERE id = ?").get(result.messageId);
+	assert.ok(saved);
+	assert.strictEqual(saved.status, "sent");
+	assert.ok(saved.provider_message_id && saved.provider_message_id.includes("@aurelia.com"));
 });

@@ -112,6 +112,13 @@ export function inferDiagnosticHint(params: {
 	}
 
 	if (
+		msg.includes("destination address is not a verified address") ||
+		msg.includes("not a verified address")
+	) {
+		return "Cloudflare's send_email Worker binding (Email Routing) only allows sending to verified destination addresses registered in your Cloudflare account. To send to any external email address, configure an outbound transactional provider (Brevo, Resend, SendPulse, ZeptoMail, or AWS SES) in MailHub Provider Keys, or enable Cloudflare Email Sending on your domain.";
+	}
+
+	if (
 		msg.includes("not verified") ||
 		msg.includes("unverified") ||
 		msg.includes("domain is not verified") ||

@@ -7,7 +7,7 @@ import {
 	type InboundQueueMessage,
 } from "./src/lib/email/inbound";
 import { processOutboundQueue, type OutboundQueueMessage } from "./src/lib/email/send";
-import { isImportJobMessage, isInboundQueueMessage, isWebhookRetryMessage } from "./worker-utils";
+import { isImportJobMessage, isInboundQueueMessage, isOutboundEmailMessage, isQueuedEmailJob, isWebhookRetryMessage } from "./worker-utils";
 import { sweepOrphanedRawMail } from "./src/lib/email/raw-sweeper";
 import { processImportJob, sweepImportJobs } from "./src/lib/import/jobs";
 import { processWebhookRetry, type WebhookRetryMessage } from "./src/lib/email/webhooks";
@@ -34,7 +34,7 @@ export { RealtimeHub } from "./src/lib/realtime/hub";
 export { QuotaCoordinator } from "./src/lib/router/quota-durable-object";
 import { runHealthMonitoringJob, runDailyDigestJob } from "./src/lib/mailhub/monitoring";
 import { processParallelQueueBatch, type QueuedEmailJob } from "./src/lib/mailhub/high-throughput";
-import { isMailHubDlqJob } from "./src/lib/mailhub/dlq";
+import { getExponentialBackoffSeconds, isMailHubDlqJob } from "./src/lib/mailhub/dlq";
 import { sendWithFailover } from "./src/lib/mailhub/failover";
 
 export default {
@@ -143,8 +143,8 @@ export default {
 		const mailhubJobs: { msg: Message; job: QueuedEmailJob }[] = [];
 		const standardMessages: Message[] = [];
 		for (const msg of batch.messages) {
-			if (typeof msg.body === "object" && msg.body !== null && typeof (msg.body as any).jobId === "string" && (msg.body as any).payload && (msg.body as any).projectId) {
-				mailhubJobs.push({ msg, job: msg.body as QueuedEmailJob });
+			if (isQueuedEmailJob(msg.body)) {
+				mailhubJobs.push({ msg, job: msg.body });
 			} else {
 				standardMessages.push(msg);
 			}
@@ -170,8 +170,8 @@ export default {
 					await processWebhookRetry(env, msg.body as WebhookRetryMessage);
 				} else if (isImportJobMessage(msg.body)) {
 					await processImportJob(env, { ...msg.body, attempt: msg.attempts });
-				} else if (typeof msg.body === "object" && msg.body !== null && (msg.body as { kind?: unknown }).kind === "email.scheduled") {
-					await processOutboundQueue(env, msg.body as OutboundQueueMessage);
+				} else if (isOutboundEmailMessage(msg.body)) {
+					await processOutboundQueue(env, msg.body);
 				} else if (isMailHubDlqJob(msg.body)) {
 					// Proxy rather than spread so non-enumerable Worker bindings (EMAIL, DB, KV) stay intact.
 					const retryEnv = new Proxy(env as any, {
@@ -202,7 +202,10 @@ export default {
 					attempts: msg.attempts,
 					error: err,
 				});
-				msg.retry({ delaySeconds: 10 });
+				const retryDelay = isMailHubDlqJob(msg.body)
+					? getExponentialBackoffSeconds(msg.attempts ?? 0)
+					: 10;
+				msg.retry({ delaySeconds: retryDelay });
 			}
 		}
 	},

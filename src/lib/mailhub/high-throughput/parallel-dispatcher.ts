@@ -123,6 +123,7 @@ export async function processParallelQueueBatch(
 					attachments: job.payload.attachments as any,
 				},
 				candidates: effectiveCandidates,
+				failoverHoldMs: 0,
 			});
 
 			const latencyMs = Date.now() - jobStart;

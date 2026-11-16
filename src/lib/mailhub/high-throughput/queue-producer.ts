@@ -12,13 +12,23 @@ import { openQueue } from "../../../../server/runtime/queue";
 
 // In-memory high-throughput queue fallback for local Node / testing / standalone runs
 let localHighThroughputQueue: any = null;
+let localQueueEnv: CloudflareEnv | null = null;
 
 export function getHighThroughputQueue(env: CloudflareEnv): any {
 	if (env && (env as any).MAILHUB_OUTBOUND_QUEUE) {
 		return (env as any).MAILHUB_OUTBOUND_QUEUE;
 	}
+	if (env && env.OUTBOUND_QUEUE && typeof env.OUTBOUND_QUEUE.send === "function") {
+		return env.OUTBOUND_QUEUE;
+	}
+	localQueueEnv = env;
 	if (!localHighThroughputQueue) {
 		localHighThroughputQueue = openQueue<QueuedEmailJob>("mailhub_outbound_queue");
+		localHighThroughputQueue.setConsumer(async (body: unknown) => {
+			if (!localQueueEnv || typeof body !== "object" || body === null) return;
+			const { processParallelQueueBatch } = await import("./parallel-dispatcher");
+			await processParallelQueueBatch(localQueueEnv, [body as QueuedEmailJob]);
+		});
 	}
 	return localHighThroughputQueue;
 }

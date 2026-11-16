@@ -47,11 +47,59 @@ export type SendEmailInput = {
 	/** Bring the thread back to the inbox after this many days unless a reply arrives. */
 	followUpDays?: number;
 	publicOrigin?: string;
+	/** Optional hold duration in ms before an inline transient retry (defaults to 1000ms). */
+	retryHoldMs?: number;
 };
 
 /** How long a send started from the composer waits before it is delivered. */
 const MAX_RECIPIENTS = 50;
 const MAX_QUEUE_DELAY_SECONDS = 24 * 60 * 60;
+const INLINE_RETRY_HOLD_MS = 1000;
+const MAX_OUTBOUND_QUEUE_RETRIES = 3;
+const OUTBOUND_QUEUE_RETRY_DELAYS = [10, 30, 120];
+
+function sleepHold(ms: number): Promise<void> {
+	if (ms <= 0) return Promise.resolve();
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isTransientDeliveryError(err: unknown): boolean {
+	if (!err) return false;
+	const code = (err as { code?: string })?.code;
+	if (code === "INVALID_PAYLOAD" || code === "AUTHENTICATION_ERROR") return false;
+	const statusCode = (err as { statusCode?: number; status?: number })?.statusCode ?? (err as { status?: number })?.status;
+	const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+	if (
+		msg.includes("not a verified address") ||
+		msg.includes("not set up for") ||
+		msg.includes("no api key is configured") ||
+		msg.includes("exceeds") ||
+		msg.includes("invalid sender") ||
+		msg.includes("invalid payload")
+	) {
+		return false;
+	}
+	if (code === "TRANSIENT_SERVER_ERROR" || code === "QUOTA_EXCEEDED") return true;
+	if (typeof statusCode === "number" && (statusCode === 429 || statusCode >= 500)) return true;
+	return (
+		msg.includes("429") ||
+		msg.includes("500") ||
+		msg.includes("502") ||
+		msg.includes("503") ||
+		msg.includes("504") ||
+		msg.includes("timeout") ||
+		msg.includes("timed out") ||
+		msg.includes("econnreset") ||
+		msg.includes("etimedout") ||
+		msg.includes("econnrefused") ||
+		msg.includes("fetch failed") ||
+		msg.includes("rate limit") ||
+		msg.includes("too many requests") ||
+		msg.includes("service unavailable") ||
+		msg.includes("temporarily") ||
+		msg.includes("transient")
+	);
+}
 
 type PreparedDelivery = {
 	input: SendEmailInput;
@@ -82,7 +130,7 @@ function toRecipientList(value: string | string[] | undefined): string[] {
 export async function sendEmail(
 	env: CloudflareEnv,
 	input: SendEmailInput,
-): Promise<{ messageId: string; scheduled?: boolean; undoSeconds?: number; undoRemainingMs?: number; scheduledAt?: string }> {
+): Promise<{ messageId: string; scheduled?: boolean; queued?: boolean; undoSeconds?: number; undoRemainingMs?: number; scheduledAt?: string }> {
 	const db = getDb(env);
 	const sender = await getAuthorizedSenderAddress(env, input);
 	await getOutboundProviderConfig(env, sender.fromAddr);
@@ -200,11 +248,15 @@ export async function sendEmail(
 		};
 	}
 
-	await deliverEmail(env, delivery);
-	return { messageId };
+	const deliveryResult = await deliverEmail(env, delivery);
+	return deliveryResult.queuedForRetry ? { messageId, queued: true } : { messageId };
 }
 
-async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Promise<void> {
+async function deliverEmail(
+	env: CloudflareEnv,
+	delivery: PreparedDelivery,
+	attempt = 0,
+): Promise<{ queuedForRetry: boolean }> {
 	const { input, messageId, jobId, from, mailboxId, to, cc, bcc, headers, attachments } = delivery;
 	const db = getDb(env);
 	const toAddr = joinEmailAddressList(to);
@@ -225,28 +277,36 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 			await db.update(messages).set({ textBody: prepared.text ?? null, htmlBody: prepared.html ?? null }).where(eq(messages.id, messageId));
 		}
 		const html = input.trackOpens && prepared.html ? await withTrackingPixel(env, messageId, from, prepared.html, input.publicOrigin) : prepared.html;
-		const response = await sendThroughProvider(
-			env,
-			provider,
-			{
-				from,
-				to,
-				cc,
-				bcc,
-				subject: input.subject,
-				headers,
-				html,
-				text: prepared.text,
-				attachments: prepared.attachments.map((attachment) => ({
-					filename: attachment.filename,
-					type: attachment.type,
-					content: attachment.content,
-					disposition: attachment.disposition === "inline" && attachment.contentId ? "inline" : "attachment",
-					contentId: attachment.contentId,
-				})),
-			},
-			jobId,
-		);
+		const outboundPayload = {
+			from,
+			to,
+			cc,
+			bcc,
+			subject: input.subject,
+			headers,
+			html,
+			text: prepared.text,
+			attachments: prepared.attachments.map((attachment) => ({
+				filename: attachment.filename,
+				type: attachment.type,
+				content: attachment.content,
+				disposition: attachment.disposition === "inline" && attachment.contentId ? "inline" as const : "attachment" as const,
+				contentId: attachment.contentId,
+			})),
+		};
+
+		let response: { messageId: string };
+		try {
+			response = await sendThroughProvider(env, provider, outboundPayload, jobId);
+		} catch (primaryErr) {
+			if (!isTransientDeliveryError(primaryErr)) {
+				throw primaryErr;
+			}
+			// Hold 1 second (or configured hold duration) before retrying once inline
+			const holdMs = Math.max(0, input.retryHoldMs ?? INLINE_RETRY_HOLD_MS);
+			await sleepHold(holdMs);
+			response = await sendThroughProvider(env, provider, outboundPayload, jobId);
+		}
 
 		// A fresh message starts its own conversation; Cloudflare's Message-ID is what
 		// any reply will name in In-Reply-To, so key the thread by it.
@@ -258,7 +318,7 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 				threadId: input.threadId ?? normalizeMessageId(response.messageId) ?? messageId,
 			})
 			.where(eq(messages.id, messageId));
-		await db.update(outboundJobs).set({ status: "sent", updatedAt: new Date() }).where(eq(outboundJobs.id, jobId));
+		await db.update(outboundJobs).set({ status: "sent", error: null, updatedAt: new Date() }).where(eq(outboundJobs.id, jobId));
 		if (input.followUpDays) {
 			// The message is already out; a reminder that cannot be stored must not fail the send.
 			await setFollowUp(env, { messageId, userId: input.userId, days: input.followUpDays }).catch((error) => console.error("Follow-up reminder skipped", error));
@@ -277,8 +337,38 @@ async function deliverEmail(env: CloudflareEnv, delivery: PreparedDelivery): Pro
 			action: "email.send",
 			metadata: { to: toAddr, cc: cc.length ? joinEmailAddressList(cc) : undefined, subject: input.subject },
 		});
+		return { queuedForRetry: false };
 	} catch (err) {
 		const error = err instanceof Error ? err.message : "Send failed";
+		if (
+			isTransientDeliveryError(err) &&
+			attempt < MAX_OUTBOUND_QUEUE_RETRIES &&
+			env.OUTBOUND_QUEUE &&
+			typeof env.OUTBOUND_QUEUE.send === "function"
+		) {
+			const nextAttempt = attempt + 1;
+			const delaySeconds = OUTBOUND_QUEUE_RETRY_DELAYS[Math.min(attempt, OUTBOUND_QUEUE_RETRY_DELAYS.length - 1)];
+			await db.update(messages).set({ status: "queued" }).where(eq(messages.id, messageId));
+			await db
+				.update(outboundJobs)
+				.set({
+					status: "queued",
+					error: `Transient failure (retry ${nextAttempt}/${MAX_OUTBOUND_QUEUE_RETRIES} scheduled in ${delaySeconds}s): ${error}`,
+					updatedAt: new Date(),
+				})
+				.where(eq(outboundJobs.id, jobId));
+			await env.OUTBOUND_QUEUE.send(
+				{
+					kind: "email.retry",
+					jobId,
+					messageId,
+					attempt: nextAttempt,
+				},
+				{ delaySeconds },
+			);
+			return { queuedForRetry: true };
+		}
+
 		await db.update(messages).set({ status: "failed" }).where(eq(messages.id, messageId));
 		await db
 			.update(outboundJobs)
@@ -306,12 +396,20 @@ async function withTrackingPixel(env: CloudflareEnv, messageId: string, from: st
 	}
 }
 
-export type OutboundQueueMessage = {
-	kind: "email.scheduled";
-	jobId: string;
-	messageId: string;
-	scheduledAt: string;
-};
+export type OutboundQueueMessage =
+	| {
+			kind: "email.scheduled";
+			jobId: string;
+			messageId: string;
+			scheduledAt: string;
+			attempt?: number;
+	  }
+	| {
+			kind: "email.retry";
+			jobId: string;
+			messageId: string;
+			attempt: number;
+	  };
 
 async function enqueueScheduledDelivery(
 	env: CloudflareEnv,
@@ -400,16 +498,18 @@ export async function processOutboundQueue(
 		.where(eq(outboundJobs.id, payload.jobId))
 		.limit(1);
 	if (!job || job.status !== "queued") return;
-	const scheduledAt = new Date(payload.scheduledAt);
 	const delivery = deliveryFromJob(payload.jobId, payload.messageId, job.payload);
-	if (scheduledAt.getTime() > Date.now()) {
-		await enqueueScheduledDelivery(env, delivery, scheduledAt);
-		return;
+	if (payload.kind === "email.scheduled") {
+		const scheduledAt = new Date(payload.scheduledAt);
+		if (scheduledAt.getTime() > Date.now()) {
+			await enqueueScheduledDelivery(env, delivery, scheduledAt);
+			return;
+		}
 	}
 	// Claim the job before delivering. Cancelling deletes only a job that is still
 	// "queued", so exactly one of cancel and delivery wins.
 	const claimed = await claimJob(db, payload.jobId);
 	if (!claimed.length) return;
 	delivery.attachments = await loadMessageAttachmentContents(env, payload.messageId);
-	await deliverEmail(env, delivery);
+	await deliverEmail(env, delivery, payload.attempt ?? 0);
 }

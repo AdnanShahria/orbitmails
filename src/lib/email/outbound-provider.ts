@@ -288,11 +288,26 @@ function isSenderRejectionError(error: unknown): boolean {
 	);
 }
 
+const DEFAULT_FAILOVER_HOLD_MS = 1000;
+
+function sleepHold(ms: number): Promise<void> {
+	if (ms <= 0) return Promise.resolve();
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldHoldBeforeFailover(error: unknown): boolean {
+	if (isSenderRejectionError(error)) return false;
+	const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+	if (msg.includes("not a verified address") || msg.includes("quota_exceeded")) return false;
+	return true;
+}
+
 async function tryMailHubFallbacks(
 	env: CloudflareEnv,
 	message: OutboundProviderMessage,
 	idempotencyKey?: string,
 	excludeProviders: MailHubProviderType[] = [],
+	initialHoldMs = 0,
 ): Promise<{ messageId: string } | null> {
 	const excluded = new Set(excludeProviders.map((p) => p.toLowerCase()));
 	const candidates = (await resolveConfiguredMailHubFallbacks(env)).filter(
@@ -300,12 +315,17 @@ async function tryMailHubFallbacks(
 	);
 	if (candidates.length === 0) return null;
 
+	if (initialHoldMs > 0) {
+		await sleepHold(initialHoldMs);
+	}
+
 	const canonical = resolveCanonicalOutboundSender(message.from, message.headers);
 	const canRetryCanonical =
 		canonical.from &&
 		getEmailAddress(canonical.from).toLowerCase() !== getEmailAddress(message.from).toLowerCase();
 
-	for (const candidate of candidates) {
+	for (let i = 0; i < candidates.length; i++) {
+		const candidate = candidates[i];
 		try {
 			const res = await sendWithAdapter(
 				candidate.provider,
@@ -336,6 +356,9 @@ async function tryMailHubFallbacks(
 				}
 			} else {
 				console.warn(`[Orbitmails] Fallback provider ${candidate.provider} failed:`, err);
+			}
+			if (i + 1 < candidates.length && shouldHoldBeforeFailover(err)) {
+				await sleepHold(DEFAULT_FAILOVER_HOLD_MS);
 			}
 		}
 	}
@@ -392,6 +415,9 @@ export async function sendThroughProvider(
 				console.warn("[Orbitmails] Brevo delivery failed, assessing failover to ZeptoMail:", brevoError);
 				if (config.zeptoApiKey && shouldFailover(brevoError)) {
 					try {
+						if (shouldHoldBeforeFailover(brevoError)) {
+							await sleepHold(DEFAULT_FAILOVER_HOLD_MS);
+						}
 						const result = await sendWithAdapter(
 							"zeptomail",
 							{ sendMailToken: config.zeptoApiKey, bounceAddress: config.zeptoBounceAddress },
@@ -403,7 +429,8 @@ export async function sendThroughProvider(
 					} catch (zeptoError) {
 						console.error("[Orbitmails] ZeptoMail fallback delivery also failed:", zeptoError);
 						if (shouldFailover(zeptoError)) {
-							const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["brevo", "zeptomail"]);
+							const holdMs = shouldHoldBeforeFailover(zeptoError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+							const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["brevo", "zeptomail"], holdMs);
 							if (fallbackResult) return fallbackResult;
 						}
 						throw new Error(
@@ -412,7 +439,8 @@ export async function sendThroughProvider(
 					}
 				}
 				if (shouldFailover(brevoError)) {
-					const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["brevo"]);
+					const holdMs = shouldHoldBeforeFailover(brevoError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+					const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["brevo"], holdMs);
 					if (fallbackResult) return fallbackResult;
 				}
 				throw brevoError;
@@ -430,7 +458,8 @@ export async function sendThroughProvider(
 				return { messageId: result.messageId };
 			} catch (zeptoError) {
 				if (shouldFailover(zeptoError)) {
-					const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["zeptomail"]);
+					const holdMs = shouldHoldBeforeFailover(zeptoError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+					const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["zeptomail"], holdMs);
 					if (fallbackResult) return fallbackResult;
 				}
 				throw zeptoError;
@@ -445,7 +474,8 @@ export async function sendThroughProvider(
 			return { messageId: result.messageId };
 		} catch (resendError) {
 			if (shouldFailover(resendError)) {
-				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["resend"]);
+				const holdMs = shouldHoldBeforeFailover(resendError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["resend"], holdMs);
 				if (fallbackResult) return fallbackResult;
 			}
 			throw resendError;
@@ -458,7 +488,8 @@ export async function sendThroughProvider(
 			return { messageId: result.messageId };
 		} catch (sesError) {
 			if (shouldFailover(sesError)) {
-				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["ses"]);
+				const holdMs = shouldHoldBeforeFailover(sesError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["ses"], holdMs);
 				if (fallbackResult) return fallbackResult;
 			}
 			throw sesError;
@@ -477,7 +508,8 @@ export async function sendThroughProvider(
 			return { messageId: result.messageId };
 		} catch (mailgunError) {
 			if (shouldFailover(mailgunError)) {
-				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["mailgun"]);
+				const holdMs = shouldHoldBeforeFailover(mailgunError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+				const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["mailgun"], holdMs);
 				if (fallbackResult) return fallbackResult;
 			}
 			throw mailgunError;
@@ -495,7 +527,8 @@ export async function sendThroughProvider(
 			lowerMsg.includes("not a verified address");
 
 		if (shouldFailover(cfError) || isUnverifiedDestination || (cfError as { code?: string })?.code === "AUTHENTICATION_ERROR") {
-			const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["cloudflare"]);
+			const holdMs = !isUnverifiedDestination && shouldHoldBeforeFailover(cfError) ? DEFAULT_FAILOVER_HOLD_MS : 0;
+			const fallbackResult = await tryMailHubFallbacks(env, message, idempotencyKey, ["cloudflare"], holdMs);
 			if (fallbackResult) return fallbackResult;
 		}
 

@@ -7,11 +7,20 @@ import { getUserFromSession } from "@/lib/auth/session";
 import { getSessionTokenFromRequest } from "@/lib/realtime/utils";
 import { processInboundMessage } from "@/lib/email/inbound";
 import { processAgentDraftJob } from "@/lib/agent/jobs/utils";
-import { processOutboundQueue, type OutboundQueueMessage } from "@/lib/email/send";
+import { processOutboundQueue } from "@/lib/email/send";
 import { processWebhookRetry, type WebhookRetryMessage } from "@/lib/email/webhooks";
 import { processImportJob } from "@/lib/import/jobs";
+import { isMailHubDlqJob } from "@/lib/mailhub/dlq";
+import { sendWithFailover } from "@/lib/mailhub/failover";
+import { processParallelQueueBatch } from "@/lib/mailhub/high-throughput";
 import { applyPendingMigrations } from "@/lib/migrations/service";
-import { isImportJobMessage, isInboundQueueMessage, isWebhookRetryMessage } from "../worker-utils";
+import {
+	isImportJobMessage,
+	isInboundQueueMessage,
+	isOutboundEmailMessage,
+	isQueuedEmailJob,
+	isWebhookRetryMessage,
+} from "../worker-utils";
 import { createNodeRuntime } from "./runtime/env";
 import { applyMigrations } from "./runtime/migrate";
 import { startScheduler } from "./runtime/scheduler";
@@ -39,9 +48,33 @@ async function main() {
 		if (isInboundQueueMessage(body)) await processInboundMessage(env, body);
 	});
 	runtime.outboundQueue.setConsumer(async (body) => {
-		if (isWebhookRetryMessage(body)) await processWebhookRetry(env, body as WebhookRetryMessage);
-		else if (isImportJobMessage(body)) await processImportJob(env, body);
-		else await processOutboundQueue(env, body as OutboundQueueMessage);
+		if (isWebhookRetryMessage(body)) {
+			await processWebhookRetry(env, body as WebhookRetryMessage);
+		} else if (isImportJobMessage(body)) {
+			await processImportJob(env, body);
+		} else if (isQueuedEmailJob(body)) {
+			await processParallelQueueBatch(env, [body]);
+		} else if (isMailHubDlqJob(body)) {
+			const retryEnv = new Proxy(env as any, {
+				get: (target, property) =>
+					property === "SEND_QUEUE" || property === "OUTBOUND_QUEUE" || property === "MAILHUB_DLQ"
+						? undefined
+						: Reflect.get(target, property),
+			});
+			const retryResult = await sendWithFailover({
+				env: retryEnv,
+				projectId: body.projectId,
+				deliveryId: body.deliveryId,
+				dateBucket: body.dateBucket,
+				message: body.message,
+				options: body.options,
+			});
+			if (!retryResult.success) {
+				throw new Error(retryResult.message || "MailHub queue retry failed");
+			}
+		} else if (isOutboundEmailMessage(body)) {
+			await processOutboundQueue(env, body);
+		}
 	});
 	runtime.agentQueue.setConsumer(async (body) => {
 		if (typeof body === "object" && body !== null && (body as { kind?: unknown }).kind === "agent.draft" && typeof (body as { jobId?: unknown }).jobId === "string") await processAgentDraftJob(env, (body as { jobId: string }).jobId);

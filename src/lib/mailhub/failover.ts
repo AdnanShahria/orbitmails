@@ -39,6 +39,14 @@ import type {
 	RoutingOptions,
 } from "./types";
 
+/** Default hold period (1 second) before failing over to the next provider after a transient failure. */
+export const DEFAULT_FAILOVER_HOLD_MS = 1000;
+
+function sleepHold(ms: number): Promise<void> {
+	if (ms <= 0) return Promise.resolve();
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface SendWithFailoverParams {
 	projectId: string;
 	message: OutboundProviderMessage;
@@ -50,6 +58,8 @@ export interface SendWithFailoverParams {
 	circuitBreaker?: CircuitBreaker;
 	telemetryHook?: TelemetryHook;
 	ctx?: { waitUntil: (promise: Promise<unknown>) => void };
+	/** Override hold delay in ms before trying next candidate on failure (defaults to 1000ms). */
+	failoverHoldMs?: number;
 	env: MailHubEnv;
 }
 
@@ -703,11 +713,17 @@ export async function sendWithFailover(
 					ctx,
 				);
 
+				// Hold briefly (default 1s) before failing over to next candidate on transient failures
+				if (index + 1 < candidates.length) {
+					const holdMs = Math.max(0, params.failoverHoldMs ?? routingOptions?.failoverHoldMs ?? DEFAULT_FAILOVER_HOLD_MS);
+					await sleepHold(holdMs);
+				}
+
 				// Continue to next provider in the waterfall
 				continue;
 			}
 
-			// Case 4: AUTHENTICATION_ERROR -> Alert & failover
+			// Case 4: AUTHENTICATION_ERROR -> Alert & failover immediately
 			await globalTelemetry.emit(
 				{
 					type: "attempt_failure",

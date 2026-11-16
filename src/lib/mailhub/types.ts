@@ -115,6 +115,8 @@ export interface RoutingOptions {
 	credentialsOverride?: ProviderCredential[]; // For isolated unit tests & offline simulations
 	healthOverride?: Record<string, Partial<ProviderHealthInfo>>; // Simulated health events
 	usageOverride?: Record<string, number>; // Simulated quota usage counts
+	/** Hold delay in milliseconds before failing over after a transient error (default 1000ms). */
+	failoverHoldMs?: number;
 }
 
 // ---------------------------------------------------------------------------

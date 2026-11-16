@@ -256,3 +256,88 @@ test("resolveCanonicalOutboundSender and CloudflareEmailAdapter rewrite any send
 	assert.equal(sentPayloads[0].from, '"Fashion Doniya" <contact@orbitsaas.cloud>');
 	assert.equal(sentPayloads[0].headers?.["Reply-To"], "alerts@fashiondoniya.com");
 });
+
+test("sendWithAdapter preserves prototype-based Cloudflare SendEmail bindings across decryptCredentialsRecord", async () => {
+	class NativeSendEmailBinding {
+		constructor() {
+			this.sent = [];
+		}
+		async send(payload) {
+			this.sent.push(payload);
+			return { messageId: "<cf-native-proto@orbitsaas.cloud>" };
+		}
+	}
+
+	const binding = new NativeSendEmailBinding();
+	assert.deepEqual(Object.keys(binding).includes("send"), false, "send lives on prototype, like workerd SendEmail");
+
+	const result = await mailhub.sendWithAdapter(
+		"cloudflare",
+		{ emailBinding: binding },
+		{
+			from: "App <noreply@example.com>",
+			to: ["user@example.com"],
+			subject: "Prototype binding check",
+			text: "Hello",
+		},
+		undefined,
+		{ EMAIL: binding },
+	);
+
+	assert.equal(result.success, true);
+	assert.equal(result.messageId, "<cf-native-proto@orbitsaas.cloud>");
+	assert.equal(binding.sent.length, 1);
+});
+
+test("CloudflareEmailAdapter falls back to env.EMAIL when credentials.emailBinding lacks .send and supports CF REST fallback", async () => {
+	const adapter = new mailhub.CloudflareEmailAdapter();
+	const envSent = [];
+
+	// 1. Malformed empty credentials.emailBinding should still fall back to valid env.EMAIL
+	const envResult = await adapter.send(
+		{ emailBinding: {} },
+		{
+			from: "Sender <hello@example.com>",
+			to: ["user@example.com"],
+			subject: "Fallback to env.EMAIL",
+			text: "Works",
+		},
+		undefined,
+		{
+			EMAIL: {
+				send: async (payload) => {
+					envSent.push(payload);
+					return { messageId: "<cf-env-fallback@orbitsaas.cloud>" };
+				},
+			},
+		},
+	);
+	assert.equal(envResult.success, true);
+	assert.equal(envSent.length, 1);
+
+	// 2. When env.EMAIL is absent, CF_ACCOUNT_ID + CF_TOKEN uses Cloudflare Email Sending REST API
+	const originalFetch = globalThis.fetch;
+	const fetchCalls = [];
+	globalThis.fetch = async (url, init) => {
+		fetchCalls.push({ url, init });
+		return new Response(JSON.stringify({ success: true }), { status: 200 });
+	};
+	try {
+		const restResult = await adapter.send(
+			{},
+			{
+				from: "Sender <hello@example.com>",
+				to: ["user@example.com"],
+				subject: "REST fallback",
+				text: "Works via REST",
+			},
+			undefined,
+			{ CF_ACCOUNT_ID: "acct_123", CF_TOKEN: "cf_tok_secret" },
+		);
+		assert.equal(restResult.success, true);
+		assert.equal(fetchCalls.length, 1);
+		assert.match(fetchCalls[0].url, /\/accounts\/acct_123\/email\/sending\/send$/);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});

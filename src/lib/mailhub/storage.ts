@@ -742,8 +742,13 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 				prov.configured = true;
 			} else if (pType === "ses" && ((envAny.AWS_ACCESS_KEY_ID && envAny.AWS_SECRET_ACCESS_KEY) || prov.apiKeyEnc)) {
 				prov.configured = true;
-			} else if (pType === "cloudflare" && envAny.EMAIL) {
-				prov.configured = true;
+			} else if (pType === "cloudflare") {
+				const hasBinding = Boolean(envAny.EMAIL && typeof envAny.EMAIL.send === "function");
+				const hasRestApi = Boolean(
+					(envAny.CF_ACCOUNT_ID && envAny.CF_TOKEN) ||
+						(processEnv.CF_ACCOUNT_ID && processEnv.CF_TOKEN),
+				);
+				prov.configured = hasBinding || hasRestApi;
 			}
 		}
 	}

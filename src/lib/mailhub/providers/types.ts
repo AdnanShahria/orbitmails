@@ -59,6 +59,9 @@ export interface MailgunCredentials {
 }
 
 export interface CloudflareCredentials {
+	accountId?: string;
+	apiKey?: string;
+	token?: string;
 	emailBinding?: {
 		send(message: {
 			from: string;

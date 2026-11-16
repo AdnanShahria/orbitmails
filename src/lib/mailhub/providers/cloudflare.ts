@@ -7,7 +7,71 @@ import type {
 	ProviderSendOptions,
 	ProviderSendResult,
 } from "./types";
-import { CANONICAL_OUTBOUND_SENDER, mintMessageId, resolveCanonicalOutboundSender } from "./utils";
+import { CANONICAL_OUTBOUND_SENDER, fetchWithTimeout, mintMessageId, resolveCanonicalOutboundSender, toBase64 } from "./utils";
+
+async function sendViaCloudflareRestApi(
+	accountId: string,
+	token: string,
+	payload: {
+		from: string;
+		to: string[];
+		cc?: string[];
+		bcc?: string[];
+		subject: string;
+		headers?: Record<string, string>;
+		html?: string;
+		text?: string;
+		attachments?: Array<{
+			filename: string;
+			type: string;
+			content: ArrayBuffer;
+			disposition: "attachment" | "inline";
+			contentId?: string;
+		}>;
+	},
+	messageId: string,
+	timeoutMs = 15000,
+): Promise<{ messageId: string }> {
+	const replyTo = payload.headers?.["Reply-To"] || payload.headers?.["reply-to"];
+	const response = await fetchWithTimeout(
+		`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/email/sending/send`,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				from: payload.from,
+				to: payload.to,
+				...(payload.cc?.length ? { cc: payload.cc } : {}),
+				...(payload.bcc?.length ? { bcc: payload.bcc } : {}),
+				...(replyTo ? { reply_to: replyTo } : {}),
+				subject: payload.subject,
+				text: payload.text,
+				html: payload.html,
+				headers: { ...(payload.headers ?? {}), "Message-ID": messageId },
+				attachments: payload.attachments?.map((attachment) => ({
+					filename: attachment.filename,
+					type: attachment.type,
+					content: toBase64(attachment.content),
+					disposition: attachment.disposition,
+					...(attachment.contentId ? { content_id: attachment.contentId } : {}),
+				})),
+			}),
+		},
+		timeoutMs,
+	);
+
+	if (!response.ok) {
+		const detail = await response.text().catch(() => "");
+		const error = new Error(`Cloudflare Email Sending failed (${response.status}): ${detail.slice(0, 300)}`);
+		(error as any).statusCode = response.status;
+		throw error;
+	}
+
+	return { messageId };
+}
 
 export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredentials> {
 	readonly provider = "cloudflare" as const;
@@ -15,17 +79,33 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 	async send(
 		credentials: CloudflareCredentials,
 		message: OutboundProviderMessage,
-		_options?: ProviderSendOptions,
+		options?: ProviderSendOptions,
 		env?: any,
 	): Promise<ProviderSendResult> {
-		const emailBinding = credentials?.emailBinding || env?.EMAIL;
-		if (!emailBinding || typeof emailBinding.send !== "function") {
+		const emailBinding =
+			credentials?.emailBinding && typeof credentials.emailBinding.send === "function"
+				? credentials.emailBinding
+				: env?.EMAIL && typeof env.EMAIL.send === "function"
+					? env.EMAIL
+					: undefined;
+
+		const processEnv: Record<string, string | undefined> =
+			typeof process !== "undefined" && process.env ? process.env : {};
+		const cfAccountId = (credentials?.accountId || env?.CF_ACCOUNT_ID || processEnv.CF_ACCOUNT_ID || "").trim();
+		const cfToken = (credentials?.token || credentials?.apiKey || env?.CF_TOKEN || processEnv.CF_TOKEN || "").trim();
+
+		if (!emailBinding && !(cfAccountId && cfToken)) {
 			throw new ProviderError({
 				message: "Cloudflare EMAIL binding is not available in environment or credentials",
 				code: "AUTHENTICATION_ERROR",
 				provider: this.provider,
 			});
 		}
+
+		const dispatch = (payload: Parameters<NonNullable<CloudflareCredentials["emailBinding"]>["send"]>[0], msgId: string) =>
+			emailBinding
+				? emailBinding.send(payload)
+				: sendViaCloudflareRestApi(cfAccountId, cfToken, payload, msgId, options?.timeoutMs);
 
 		// Always rewrite outbound sender to canonical contact@orbitsaas.cloud (preserving display name & Reply-To)
 		const rawFrom = typeof message.from === "string" ? message.from : (message.from as any)?.address || "";
@@ -64,7 +144,7 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 		};
 
 		try {
-			const response = await emailBinding.send(sendPayload);
+			const response = await dispatch(sendPayload, messageId);
 
 			const latencyMs = Math.round(performance.now() - startTime);
 			const returnedId = response?.messageId ?? messageId;
@@ -101,13 +181,16 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 							`contact@${verifiedHostname}`,
 						);
 						const fallbackMsgId = fallbackCanonical.headers["Message-ID"] ?? mintMessageId(fallbackCanonical.from);
-						const retryRes = await emailBinding.send({
-							...sendPayload,
-							from: fallbackCanonical.from,
-							headers: Object.keys(fallbackCanonical.headers).length
-								? fallbackCanonical.headers
-								: undefined,
-						});
+						const retryRes = await dispatch(
+							{
+								...sendPayload,
+								from: fallbackCanonical.from,
+								headers: Object.keys(fallbackCanonical.headers).length
+									? fallbackCanonical.headers
+									: undefined,
+							},
+							fallbackMsgId,
+						);
 						const latencyMs = Math.round(performance.now() - startTime);
 						const returnedId = retryRes?.messageId ?? fallbackMsgId;
 						return {
@@ -125,7 +208,7 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 				}
 			}
 
-			throw this.parseError(err);
+			throw this.parseError(err, (err as any)?.statusCode);
 		}
 	}
 

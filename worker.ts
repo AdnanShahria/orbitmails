@@ -173,8 +173,15 @@ export default {
 				} else if (typeof msg.body === "object" && msg.body !== null && (msg.body as { kind?: unknown }).kind === "email.scheduled") {
 					await processOutboundQueue(env, msg.body as OutboundQueueMessage);
 				} else if (isMailHubDlqJob(msg.body)) {
+					// Proxy rather than spread so non-enumerable Worker bindings (EMAIL, DB, KV) stay intact.
+					const retryEnv = new Proxy(env as any, {
+						get: (target, property) =>
+							property === "SEND_QUEUE" || property === "OUTBOUND_QUEUE" || property === "MAILHUB_DLQ"
+								? undefined
+								: Reflect.get(target, property),
+					});
 					const retryResult = await sendWithFailover({
-						env: { ...(env as any), SEND_QUEUE: undefined, OUTBOUND_QUEUE: undefined, MAILHUB_DLQ: undefined },
+						env: retryEnv,
 						projectId: msg.body.projectId,
 						deliveryId: msg.body.deliveryId,
 						dateBucket: msg.body.dateBucket,

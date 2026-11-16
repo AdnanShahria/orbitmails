@@ -158,20 +158,28 @@ export async function decryptCredential(
 	}
 }
 
+function isPlainObject(value: unknown): value is Record<string, any> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const proto = Object.getPrototypeOf(value);
+	return proto === Object.prototype || proto === null;
+}
+
 /**
  * Decrypts all string fields of a credential object in-place or returns a decrypted copy.
+ * Non-plain objects (such as Cloudflare Worker bindings like `SendEmail` or class instances)
+ * are preserved as-is so prototype methods are never stripped by object spreading.
  */
 export async function decryptCredentialsRecord<T extends Record<string, any>>(
 	record: T,
 	masterSecret: string,
 ): Promise<T> {
-	if (!record || typeof record !== "object") return record;
+	if (!isPlainObject(record)) return record;
 
 	const result: Record<string, any> = { ...record };
 	for (const [key, val] of Object.entries(record)) {
 		if (typeof val === "string" && val.startsWith(PREFIX)) {
 			result[key] = await decryptCredential(val, masterSecret);
-		} else if (val && typeof val === "object" && !Array.isArray(val) && !(val instanceof ArrayBuffer)) {
+		} else if (isPlainObject(val) && typeof val.send !== "function") {
 			result[key] = await decryptCredentialsRecord(val, masterSecret);
 		}
 	}

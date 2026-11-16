@@ -116,6 +116,10 @@ export async function resolveCandidateCredentials(
 				try {
 					const parsed = typeof row.creds === "string" ? JSON.parse(row.creds) : row.creds;
 					if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+						if (providerTypeLower === "cloudflare") {
+							const envAny = env as Record<string, any>;
+							return { ...parsed, emailBinding: parsed.emailBinding || envAny.EMAIL };
+						}
 						return parsed;
 					}
 					if (typeof parsed === "string" && parsed.trim().length > 0) {
@@ -152,6 +156,12 @@ export async function resolveCandidateCredentials(
 				region: prov.region || "us-east-1",
 				bounceAddress: prov.bounceAddress,
 				provider: prov.provider,
+				...(providerType === "cloudflare"
+					? {
+							emailBinding: envAny.EMAIL,
+							accountId: envAny.CF_ACCOUNT_ID || processEnv?.CF_ACCOUNT_ID,
+						}
+					: {}),
 			};
 		}
 	} catch {
@@ -220,6 +230,8 @@ export async function resolveCandidateCredentials(
 		case "cloudflare":
 			return {
 				emailBinding: envAny.EMAIL,
+				accountId: envAny.CF_ACCOUNT_ID || processEnv?.CF_ACCOUNT_ID,
+				apiKey: envAny.CF_TOKEN || processEnv?.CF_TOKEN,
 			};
 		default:
 			return { apiKey: envAny.RESEND_API_KEY || processEnv?.RESEND_API_KEY || "unknown" };

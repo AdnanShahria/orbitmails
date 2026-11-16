@@ -87,9 +87,15 @@ export function wrapAsProviderError(
 
 	const message = error instanceof Error ? error.message : String(error);
 	const lower = message.toLowerCase();
+	const rawStatus = (error as { statusCode?: unknown; status?: unknown })?.statusCode ??
+		(error as { status?: unknown })?.status;
+	const statusCode = typeof rawStatus === "number" ? rawStatus : undefined;
+	const rawResponse = (error as { rawResponse?: unknown })?.rawResponse;
 
 	// Check common patterns in message string if unclassified
 	if (
+		statusCode === 429 ||
+		statusCode === 402 ||
 		lower.includes("rate limit") ||
 		lower.includes("quota") ||
 		lower.includes("too many requests") ||
@@ -100,11 +106,15 @@ export function wrapAsProviderError(
 			message,
 			code: "QUOTA_EXCEEDED",
 			provider,
+			statusCode,
+			rawResponse,
 			cause: error,
 		});
 	}
 
 	if (
+		statusCode === 401 ||
+		statusCode === 403 ||
 		lower.includes("unauthorized") ||
 		lower.includes("forbidden") ||
 		lower.includes("api key") ||
@@ -117,11 +127,15 @@ export function wrapAsProviderError(
 			message,
 			code: "AUTHENTICATION_ERROR",
 			provider,
+			statusCode,
+			rawResponse,
 			cause: error,
 		});
 	}
 
 	if (
+		statusCode === 400 ||
+		statusCode === 422 ||
 		lower.includes("invalid email") ||
 		lower.includes("bad recipient") ||
 		lower.includes("invalid parameter") ||
@@ -133,6 +147,8 @@ export function wrapAsProviderError(
 			message,
 			code: "INVALID_PAYLOAD",
 			provider,
+			statusCode,
+			rawResponse,
 			cause: error,
 		});
 	}
@@ -141,6 +157,8 @@ export function wrapAsProviderError(
 		message,
 		code: fallbackCode,
 		provider,
+		statusCode,
+		rawResponse,
 		cause: error,
 	});
 }

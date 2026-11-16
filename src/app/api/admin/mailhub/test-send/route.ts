@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { domains } from "@/db/schema";
 import { getEnv } from "@/lib/cloudflare";
 import { requireSessionUser } from "@/lib/api/auth";
 import { isPrimaryAdmin } from "@/lib/auth/admin";
 import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { sendWithFailover } from "@/lib/mailhub/failover";
 import { getMailHubState } from "@/lib/mailhub/storage";
-import { createSendLogEntry, recordSendLogAsync } from "@/lib/mailhub/logging";
+import { createSendLogEntry, flushBatchToD1, recordSendLogAsync } from "@/lib/mailhub/logging";
+import {
+	buildDeliveryDiagnostics,
+	cleanProviderErrorMessage,
+	formatAttemptsErrorSummary,
+	resolveAttemptHttpStatus,
+} from "@/lib/mailhub/diagnostics";
 import { CANONICAL_OUTBOUND_SENDER, resolveCanonicalOutboundSender } from "@/lib/mailhub/providers/utils";
 import type { OutboundProviderMessage } from "@/lib/email/outbound-provider-types";
 import type { RoutingOptions } from "@/lib/mailhub/types";
@@ -64,6 +67,7 @@ export async function POST(request: Request) {
 			(p) => p.id === data.projectId || p.slug === data.projectId
 		);
 
+		const effectiveProjectId = project ? project.id : data.projectId;
 		const projectName = project?.name || "MailHub Test Relay";
 		const projectSlug = project?.slug || data.projectId.replace(/^proj_/, "");
 
@@ -100,72 +104,202 @@ export async function POST(request: Request) {
 			text: `${data.subject}\n\nTest dispatch from OrbitMails MailHub engine.\nRecipient: ${data.recipient}\nProject: ${projectName} (${projectSlug})\nFrom: ${fromAddress}`,
 		};
 
-		const failoverResult = await sendWithFailover({
-			projectId: project ? project.id : data.projectId,
-			message: outboundMessage,
-			routingOptions,
-			env: access.env as any,
-		});
+		const dispatchStart = Date.now();
+		let failoverResult: Awaited<ReturnType<typeof sendWithFailover>>;
 
+		try {
+			failoverResult = await sendWithFailover({
+				projectId: effectiveProjectId,
+				message: outboundMessage,
+				routingOptions,
+				env: access.env as any,
+			});
+		} catch (sendErr: any) {
+			const elapsedMs = Math.max(1, Date.now() - dispatchStart);
+			const providerUsed =
+				sendErr?.provider ||
+				(data.routingMode && data.routingMode !== "auto" ? data.routingMode : project?.providerOrder?.[0] || "cloudflare")
+					.replace(/^cred_/, "")
+					.replace(/_(main|backup|default)$/, "");
+
+			const diagnostics = buildDeliveryDiagnostics({
+				fallbackError: sendErr,
+				fallbackProvider: providerUsed,
+				stage: sendErr?.code === "INVALID_PAYLOAD" ? "validation" : "provider_attempt",
+				fromAddress: canonicalSender.from,
+				totalLatencyMs: elapsedMs,
+			});
+
+			const realError =
+				diagnostics.summaryError ||
+				cleanProviderErrorMessage(sendErr?.message) ||
+				"Failed to execute test send";
+
+			try {
+				const logEntry = createSendLogEntry({
+					projectId: effectiveProjectId,
+					providerCredId: diagnostics.providerCredId || `cred_${providerUsed}_main`,
+					provider: providerUsed,
+					toAddress: data.recipient,
+					subject: data.subject,
+					status: "failed",
+					errorMessage: realError,
+					latencyMs: elapsedMs,
+					htmlSnippet: outboundMessage.html,
+					textContent: outboundMessage.text,
+					diagnostics,
+				});
+				const flushRes = await flushBatchToD1([logEntry], access.env as any);
+				if (flushRes.flushedCount === 0 && !access.env?.DB) {
+					recordSendLogAsync(logEntry, access.env as any);
+				}
+			} catch (logErr) {
+				console.warn("[POST /api/admin/mailhub/test-send] Failed to write thrown error send log:", logErr);
+			}
+
+			const waterfall = diagnostics.attempts.map((att) => ({
+				provider: att.provider,
+				status: att.status,
+				code: att.code,
+				latencyMs: att.latencyMs,
+				message: att.error || att.rawError || "Attempt failed",
+				rawError: att.rawError,
+				hint: att.hint,
+			}));
+
+			const httpStatus =
+				typeof sendErr?.statusCode === "number" && sendErr.statusCode >= 400 && sendErr.statusCode < 600
+					? sendErr.statusCode
+					: sendErr?.code === "INVALID_PAYLOAD"
+					? 400
+					: 502;
+
+			return NextResponse.json(
+				{
+					success: false,
+					error: realError,
+					errorCode: diagnostics.errorCode,
+					diagnosticHint: diagnostics.diagnosticHint,
+					result: {
+						providerUsed,
+						latencyMs: elapsedMs,
+						attempts: diagnostics.attempts,
+						waterfall,
+					},
+				},
+				{ status: httpStatus },
+			);
+		}
+
+		const elapsedMs = Math.max(1, Date.now() - dispatchStart);
 		const attempts = failoverResult.success
 			? failoverResult.attempts
 			: (failoverResult as any).failedAttempts || [];
-		const waterfall = attempts.map((att) => ({
-			provider: att.provider,
-			status: att.code === "SUCCESS" ? 200 : att.code === "QUOTA_EXCEEDED" ? 429 : 500,
-			message:
-				att.message ||
-				(att.code === "SUCCESS" ? "Dispatched successfully" : `Attempt failed: ${att.code}`),
-		}));
+
+		const attemptsLatencySum = attempts.reduce((sum: number, a: any) => sum + (Number(a?.latencyMs) || 0), 0);
+		const latencyMs = failoverResult.success
+			? failoverResult.latencyMs || attemptsLatencySum || elapsedMs
+			: attemptsLatencySum || elapsedMs;
+
+		const waterfall = attempts.map((att: any) => {
+			const status = resolveAttemptHttpStatus(att);
+			const cleanMsg = cleanProviderErrorMessage(att.message);
+			return {
+				provider: att.provider,
+				status,
+				code: att.code,
+				latencyMs: att.latencyMs ?? 0,
+				message:
+					att.code === "SUCCESS"
+						? att.message || "Dispatched successfully"
+						: cleanMsg || att.message || `Attempt failed: ${att.code}`,
+				rawError: att.code === "SUCCESS" ? undefined : att.message,
+			};
+		});
 
 		const providerUsed =
 			(failoverResult as any).provider ||
-			(attempts.length > 0 ? attempts[attempts.length - 1].provider : "brevo");
-		const latencyMs = (failoverResult as any).latencyMs || 0;
+			(attempts.length > 0 ? attempts[attempts.length - 1].provider : "cloudflare");
 		const messageId =
 			(failoverResult as any).messageId ||
 			(failoverResult as any).providerMessageId ||
 			failoverResult.deliveryId;
 
-		// Asynchronously record this send to logging pipeline
+		const diagnostics = buildDeliveryDiagnostics({
+			deliveryId: failoverResult.deliveryId,
+			attempts,
+			fallbackError: failoverResult.success ? undefined : (failoverResult as any).message,
+			fallbackProvider: providerUsed,
+			fallbackProviderCredId: (failoverResult as any).providerCredId,
+			fromAddress: canonicalSender.from,
+			totalLatencyMs: latencyMs,
+			stage: failoverResult.success ? "delivered" : "failover_exhausted",
+		});
+
+		const realErrorSummary = failoverResult.success
+			? undefined
+			: diagnostics.summaryError ||
+				formatAttemptsErrorSummary(attempts) ||
+				(failoverResult as any).message ||
+				"Delivery failed across all candidate providers";
+
+		// Persist send log & diagnostics synchronously when possible so immediate dashboard refresh reflects real error
 		try {
 			const logEntry = createSendLogEntry({
-				projectId: project ? project.id : data.projectId,
-				providerCredId: (failoverResult as any).providerCredId || `cred_${providerUsed}_main`,
+				projectId: effectiveProjectId,
+				providerCredId:
+					(failoverResult as any).providerCredId ||
+					attempts[attempts.length - 1]?.providerCredId ||
+					`cred_${providerUsed}_main`,
 				provider: providerUsed,
 				toAddress: data.recipient,
 				subject: data.subject,
 				status: failoverResult.success ? "sent" : "failed",
 				providerMessageId: messageId,
-				errorMessage: failoverResult.success ? undefined : "All failover attempts failed or queued",
+				errorMessage: realErrorSummary,
 				latencyMs,
 				htmlSnippet: outboundMessage.html,
 				textContent: outboundMessage.text,
+				diagnostics,
 			});
-			recordSendLogAsync(logEntry, access.env as any);
+			const flushRes = await flushBatchToD1([logEntry], access.env as any);
+			if (flushRes.flushedCount === 0 && !access.env?.DB) {
+				recordSendLogAsync(logEntry, access.env as any);
+			}
 		} catch (logErr) {
 			console.warn("[POST /api/admin/mailhub/test-send] Failed to write send log:", logErr);
 		}
 
 		if (!failoverResult.success) {
-			const failedStep = waterfall.find((w) => w.status !== 200);
+			const failedStep = waterfall.find((w: any) => w.status !== 200);
 			const primaryErrorMessage =
+				realErrorSummary ||
 				failedStep?.message ||
 				attempts[attempts.length - 1]?.message ||
 				attempts[0]?.message ||
 				(failoverResult as any).message ||
-				"All failover attempts failed";
+				"Delivery failed across all candidate providers";
 
 			return NextResponse.json({
 				success: false,
 				error: primaryErrorMessage,
+				errorCode: diagnostics.errorCode,
+				diagnosticHint: diagnostics.diagnosticHint,
 				result: {
 					providerUsed,
 					latencyMs,
 					messageId,
 					deliveryId: failoverResult.deliveryId,
-					attempts,
-					waterfall,
+					attempts: diagnostics.attempts,
+					waterfall: diagnostics.attempts.map((a) => ({
+						provider: a.provider,
+						status: a.status,
+						code: a.code,
+						latencyMs: a.latencyMs,
+						message: a.error || a.rawError || "Attempt failed",
+						rawError: a.rawError,
+						hint: a.hint,
+					})),
 				},
 			});
 		}

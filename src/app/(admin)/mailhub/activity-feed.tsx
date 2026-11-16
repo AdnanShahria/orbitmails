@@ -1,27 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   AlertTriangle,
-  ArrowRight,
   Check,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Clock,
   Copy,
-  ExternalLink,
   Eye,
   FileText,
   Mail,
   RefreshCw,
   Route,
   Search,
-  Send,
   ShieldAlert,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
-import type { MailHubActivityItem, ProviderId } from "./types";
+import type { ActivityStatus, MailHubActivityItem } from "./types";
 import {
   formatLatency,
   formatTimeAgo,
@@ -49,6 +44,7 @@ export function ActivityFeed({
   onToggleStreaming,
 }: ActivityFeedProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | ActivityStatus>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"html" | "text" | "waterfall">("html");
@@ -70,17 +66,41 @@ export function ActivityFeed({
     setTimeout(() => setIsRefreshing(false), 500);
   }
 
-  // Filter activities by project and search query
+  function handleToggleRow(item: MailHubActivityItem) {
+    if (expandedId === item.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(item.id);
+    if (item.status === "failed" || item.status === "bounced") {
+      setDrawerTab("waterfall");
+    } else {
+      setDrawerTab("html");
+    }
+  }
+
+  // Filter activities by project, status, and search query
   const normId = (val: string) =>
     val.toLowerCase().replace(/^proj_/, "").replace(/[^a-z0-9]/g, "");
 
-  const filteredActivities = activities.filter((item) => {
+  const projectScopedActivities = activities.filter((item) => {
     if (
       selectedProjectFilter &&
       item.projectId !== selectedProjectFilter &&
       normId(item.projectId) !== normId(selectedProjectFilter) &&
       normId(item.projectName) !== normId(selectedProjectFilter)
     ) {
+      return false;
+    }
+    return true;
+  });
+
+  const failedCount = projectScopedActivities.filter(
+    (item) => item.status === "failed" || item.status === "bounced",
+  ).length;
+
+  const filteredActivities = projectScopedActivities.filter((item) => {
+    if (statusFilter !== "all" && item.status !== statusFilter) {
       return false;
     }
     if (searchQuery.trim()) {
@@ -90,7 +110,9 @@ export function ActivityFeed({
         item.subject.toLowerCase().includes(q) ||
         item.projectName.toLowerCase().includes(q) ||
         item.provider.toLowerCase().includes(q) ||
-        (item.messageId && item.messageId.toLowerCase().includes(q))
+        (item.messageId && item.messageId.toLowerCase().includes(q)) ||
+        (item.errorMessage && item.errorMessage.toLowerCase().includes(q)) ||
+        (item.errorCode && item.errorCode.toLowerCase().includes(q))
       );
     }
     return true;
@@ -101,7 +123,7 @@ export function ActivityFeed({
       {/* Feed Controls Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
               Live Routing &amp; Ingestion Stream
             </h2>
@@ -119,9 +141,27 @@ export function ActivityFeed({
               />
               {isStreaming ? "Live (5s poll)" : "Stream Paused"}
             </span>
+
+            {failedCount > 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  setStatusFilter((prev) => (prev === "failed" ? "all" : "failed"))
+                }
+                title="Click to filter failed deliveries and inspect errors"
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors ${
+                  statusFilter === "failed"
+                    ? "border-rose-600 bg-rose-600 text-white"
+                    : "border-rose-500/30 bg-rose-50 text-rose-800 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-950/70"
+                }`}
+              >
+                <ShieldAlert className="h-3 w-3" />
+                {failedCount} Failed
+              </button>
+            )}
           </div>
           <p className="text-xs text-neutral-600 dark:text-neutral-300">
-            Real-time delivery waterfall, failover latency, and bounce tracking
+            Real-time delivery waterfall, failover latency, and root-cause error diagnostics
           </p>
         </div>
 
@@ -132,12 +172,28 @@ export function ActivityFeed({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             <input
               type="text"
-              placeholder="Search recipient, subject..."
+              placeholder="Search recipient, subject, error..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="min-h-[44px] w-52 sm:w-60 rounded-xl border border-neutral-200 bg-white pl-9 pr-3.5 text-xs text-neutral-900 placeholder-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder-neutral-500 shadow-2xs"
+              className="min-h-11 w-52 sm:w-60 rounded-xl border border-neutral-200 bg-white pl-9 pr-3.5 text-xs text-neutral-900 placeholder-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder-neutral-500 shadow-2xs"
             />
           </div>
+
+          {/* Status Filter */}
+          <select
+            value={statusFilter}
+            aria-label="Filter activity stream by status"
+            onChange={(e) =>
+              setStatusFilter(e.target.value as "all" | ActivityStatus)
+            }
+            className="min-h-11 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 shadow-2xs"
+          >
+            <option value="all">All Statuses</option>
+            <option value="failed">Failed Only</option>
+            <option value="bounced">Bounced Only</option>
+            <option value="sent">Sent</option>
+            <option value="delivered">Delivered</option>
+          </select>
 
           {/* Project Filter */}
           <select
@@ -146,7 +202,7 @@ export function ActivityFeed({
             onChange={(e) =>
               onSelectProjectFilter?.(e.target.value === "" ? null : e.target.value)
             }
-            className="min-h-[44px] rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 shadow-2xs"
+            className="min-h-11 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 shadow-2xs"
           >
             <option value="">All Projects</option>
             {projects && projects.length > 0
@@ -163,7 +219,7 @@ export function ActivityFeed({
             variant="outline"
             size="sm"
             onClick={onToggleStreaming}
-            className="min-h-[44px] px-3.5 rounded-xl border-neutral-200 text-xs font-semibold text-neutral-800 dark:border-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 shadow-2xs"
+            className="min-h-11 px-3.5 rounded-xl border-neutral-200 text-xs font-semibold text-neutral-800 dark:border-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 shadow-2xs"
           >
             {isStreaming ? "Pause Stream" : "Resume Stream"}
           </Button>
@@ -186,7 +242,7 @@ export function ActivityFeed({
       {/* Activities Table Container with Apple HIG styling */}
       <div className="overflow-hidden rounded-3xl border border-neutral-200/80 bg-white/90 shadow-xs dark:border-neutral-800/80 dark:bg-neutral-900/90 backdrop-blur-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[780px] text-left text-sm">
+          <table className="w-full min-w-195 text-left text-sm">
             <thead className="border-b border-neutral-100 bg-neutral-50/80 text-[11px] font-semibold uppercase tracking-wider text-neutral-600 dark:border-neutral-800 dark:bg-neutral-800/50 dark:text-neutral-300">
               <tr>
                 <th scope="col" className="w-12 px-3 py-4 text-center"></th>
@@ -225,20 +281,23 @@ export function ActivityFeed({
                 filteredActivities.map((item) => {
                   const isExpanded = expandedId === item.id;
                   const latencyClass = getLatencyBadgeClass(item.latencyMs);
+                  const isErrorRow = item.status === "failed" || item.status === "bounced";
 
                   return (
                     <tr
                       key={item.id}
-                      onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                      onClick={() => handleToggleRow(item)}
                       className={`cursor-pointer transition-colors ${
                         isExpanded
                           ? "bg-blue-50/40 dark:bg-blue-950/20"
+                          : isErrorRow
+                          ? "hover:bg-rose-50/40 dark:hover:bg-rose-950/15"
                           : "hover:bg-neutral-50/70 dark:hover:bg-neutral-800/40"
                       }`}
                     >
                       {/* Expand chevron */}
                       <td className="px-3 py-4 text-center text-neutral-400">
-                        <div className="flex items-center justify-center min-h-[44px]">
+                        <div className="flex items-center justify-center min-h-11">
                           {isExpanded ? (
                             <ChevronDown className="h-4 w-4 text-blue-600 dark:text-blue-400 transition-transform" />
                           ) : (
@@ -261,14 +320,23 @@ export function ActivityFeed({
                         </span>
                       </td>
 
-                      {/* Recipient & Subject */}
-                      <td className="px-4 py-4 max-w-72">
+                      {/* Recipient, Subject & Inline Error Preview */}
+                      <td className="px-4 py-4 max-w-80">
                         <div className="truncate font-semibold text-neutral-900 dark:text-neutral-100 text-xs">
                           {item.recipient}
                         </div>
                         <div className="truncate text-xs text-neutral-500 dark:text-neutral-400">
                           {item.subject}
                         </div>
+                        {isErrorRow && item.errorMessage && (
+                          <div
+                            className="mt-1 flex items-center gap-1 truncate text-[11px] font-medium text-rose-700 dark:text-rose-400"
+                            title={item.errorMessage}
+                          >
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{item.errorMessage}</span>
+                          </div>
+                        )}
                       </td>
 
                       {/* Routing Provider & Failover pill */}
@@ -304,13 +372,19 @@ export function ActivityFeed({
                           </span>
                         )}
                         {item.status === "bounced" && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
+                          <span
+                            title={item.errorMessage || "Message bounced"}
+                            className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                          >
                             Bounced
                           </span>
                         )}
                         {item.status === "failed" && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
-                            Failed
+                          <span
+                            title={item.errorMessage || "Click row to inspect error"}
+                            className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-50 px-2.5 py-0.5 text-[11px] font-semibold text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                          >
+                            Failed{item.httpStatus ? ` · ${item.httpStatus}` : ""}
                           </span>
                         )}
                       </td>
@@ -338,8 +412,84 @@ export function ActivityFeed({
               const activeItem = activities.find((a) => a.id === expandedId);
               if (!activeItem) return null;
 
+              const isFailure = activeItem.status === "failed" || activeItem.status === "bounced";
+              const displayError =
+                activeItem.errorMessage ||
+                activeItem.routeAttempts?.find((a) => a.error)?.error;
+
               return (
                 <div className="space-y-4">
+                  {/* Real Error Root-Cause & Remediation Card */}
+                  {(isFailure || displayError) && (
+                    <div className="rounded-3xl border border-rose-200/90 bg-rose-50/90 p-5 shadow-xs dark:border-rose-900/60 dark:bg-rose-950/30">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300">
+                            <ShieldAlert className="h-5 w-5" />
+                          </div>
+                          <div className="min-w-0 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-bold uppercase tracking-wider text-rose-900 dark:text-rose-200">
+                                Root Cause Diagnostics
+                              </span>
+                              {activeItem.errorCode && (
+                                <span className="rounded-md border border-rose-300/80 bg-white/80 px-2 py-0.5 font-mono text-[10px] font-bold text-rose-800 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-200">
+                                  {activeItem.errorCode}
+                                </span>
+                              )}
+                              {activeItem.httpStatus && (
+                                <span className="rounded-md bg-rose-200/70 px-2 py-0.5 font-mono text-[10px] font-bold text-rose-900 dark:bg-rose-900/70 dark:text-rose-200">
+                                  HTTP {activeItem.httpStatus}
+                                </span>
+                              )}
+                              {activeItem.diagnosticsStage && (
+                                <span className="rounded-md bg-neutral-200/70 px-2 py-0.5 font-mono text-[10px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                                  stage: {activeItem.diagnosticsStage}
+                                </span>
+                              )}
+                            </div>
+
+                            <pre className="whitespace-pre-wrap wrap-break-word rounded-2xl border border-rose-200/70 bg-white/90 px-3.5 py-2.5 font-mono text-xs leading-relaxed text-rose-900 select-text dark:border-rose-900/50 dark:bg-neutral-950/70 dark:text-rose-200">
+                              {displayError || "No detailed error message was recorded for this failure."}
+                            </pre>
+
+                            {activeItem.diagnosticHint && (
+                              <div className="rounded-2xl border border-amber-200/80 bg-amber-50/90 px-3.5 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-200">
+                                <span className="font-bold">How to fix: </span>
+                                <span>{activeItem.diagnosticHint}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {displayError && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopy(displayError, `err-${activeItem.id}`);
+                            }}
+                            className="min-h-10 shrink-0 gap-1.5 rounded-xl border-rose-200 bg-white/90 px-3 text-xs font-semibold text-rose-800 hover:bg-rose-100 dark:border-rose-800 dark:bg-neutral-900 dark:text-rose-200"
+                          >
+                            {copiedKey === `err-${activeItem.id}` ? (
+                              <>
+                                <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                <span>Copied Error</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3.5 w-3.5" />
+                                <span>Copy Error</span>
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Apple HIG Mail Content & Recipient Inspector */}
                   <div className="rounded-3xl border border-neutral-200/80 bg-white p-5 shadow-xs dark:border-neutral-800 dark:bg-neutral-850">
                     {/* Top Row: Project Badge, Subject line and Timestamp */}
@@ -488,7 +638,7 @@ export function ActivityFeed({
                           e.stopPropagation();
                           setDrawerTab("html");
                         }}
-                        className={`flex min-h-[44px] items-center gap-2 rounded-xl px-4 py-2 font-semibold transition-all ${
+                        className={`flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 font-semibold transition-all ${
                           drawerTab === "html"
                             ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white"
                             : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
@@ -504,7 +654,7 @@ export function ActivityFeed({
                           e.stopPropagation();
                           setDrawerTab("text");
                         }}
-                        className={`flex min-h-[44px] items-center gap-2 rounded-xl px-4 py-2 font-semibold transition-all ${
+                        className={`flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 font-semibold transition-all ${
                           drawerTab === "text"
                             ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white"
                             : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
@@ -520,14 +670,14 @@ export function ActivityFeed({
                           e.stopPropagation();
                           setDrawerTab("waterfall");
                         }}
-                        className={`flex min-h-[44px] items-center gap-2 rounded-xl px-4 py-2 font-semibold transition-all ${
+                        className={`flex min-h-11 items-center gap-2 rounded-xl px-4 py-2 font-semibold transition-all ${
                           drawerTab === "waterfall"
                             ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white"
                             : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
                         }`}
                       >
                         <Route className="h-4 w-4" />
-                        <span>Routing Waterfall</span>
+                        <span>Diagnostics &amp; Waterfall</span>
                       </button>
                     </div>
 
@@ -540,7 +690,7 @@ export function ActivityFeed({
                           e.stopPropagation();
                           handleCopy(activeItem.htmlSnippet || "", `html-${activeItem.id}`);
                         }}
-                        className="min-h-[44px] gap-2 px-3.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-200/60 dark:text-neutral-300 dark:hover:bg-neutral-800 rounded-xl"
+                        className="min-h-11 gap-2 px-3.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-200/60 dark:text-neutral-300 dark:hover:bg-neutral-800 rounded-xl"
                       >
                         {copiedKey === `html-${activeItem.id}` ? (
                           <>
@@ -564,7 +714,7 @@ export function ActivityFeed({
                           e.stopPropagation();
                           handleCopy(activeItem.textContent || activeItem.subject, `txt-${activeItem.id}`);
                         }}
-                        className="min-h-[44px] gap-2 px-3.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-200/60 dark:text-neutral-300 dark:hover:bg-neutral-800 rounded-xl"
+                        className="min-h-11 gap-2 px-3.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-200/60 dark:text-neutral-300 dark:hover:bg-neutral-800 rounded-xl"
                       >
                         {copiedKey === `txt-${activeItem.id}` ? (
                           <>
@@ -611,53 +761,82 @@ export function ActivityFeed({
                     </div>
                   )}
 
-                  {/* Tab 3: Routing Waterfall & Failover Trace */}
+                  {/* Tab 3: Routing Waterfall & Detailed Error Diagnostics */}
                   {drawerTab === "waterfall" && (
                     <div className="rounded-3xl border border-neutral-200/80 bg-white p-5 text-xs dark:border-neutral-800 dark:bg-neutral-850 shadow-xs">
-                      <div className="flex items-center justify-between border-b border-neutral-100 pb-3 dark:border-neutral-800">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 pb-3 dark:border-neutral-800">
                         <div className="font-semibold text-neutral-900 dark:text-neutral-100">
-                          Watermarked Routing Chain
+                          Execution Waterfall &amp; Provider Error Trace
                         </div>
-                        <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">
-                          Total Latency: {formatLatency(activeItem.latencyMs)}
-                        </span>
+                        <div className="flex items-center gap-3 text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">
+                          {activeItem.deliveryId && (
+                            <span className="font-mono">ID: {activeItem.deliveryId}</span>
+                          )}
+                          <span>Total Latency: {formatLatency(activeItem.latencyMs)}</span>
+                        </div>
                       </div>
 
-                      <div className="mt-3.5 space-y-2">
+                      <div className="mt-3.5 space-y-2.5">
                         {activeItem.routeAttempts && activeItem.routeAttempts.length > 0 ? (
                           activeItem.routeAttempts.map((attempt, index) => (
                             <div
                               key={index}
-                              className="flex items-center justify-between rounded-2xl bg-neutral-50 px-3.5 py-2.5 dark:bg-neutral-800/60 border border-neutral-100 dark:border-neutral-800"
+                              className="rounded-2xl bg-neutral-50 px-4 py-3 dark:bg-neutral-800/60 border border-neutral-100 dark:border-neutral-800 space-y-2"
                             >
-                              <div className="flex items-center gap-2.5">
-                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-200 text-[11px] font-bold text-neutral-700 dark:bg-neutral-700 dark:text-neutral-300">
-                                  {index + 1}
-                                </span>
-                                <span className="font-semibold text-neutral-900 dark:text-neutral-100">
-                                  {getProviderDisplayName(attempt.provider)}
-                                </span>
-                                {attempt.error && (
-                                  <span className="text-rose-600 dark:text-rose-400 font-medium">
-                                    — {attempt.error}
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-200 text-[11px] font-bold text-neutral-700 dark:bg-neutral-700 dark:text-neutral-300">
+                                    {index + 1}
                                   </span>
-                                )}
+                                  <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+                                    {getProviderDisplayName(attempt.provider)}
+                                  </span>
+                                  {attempt.providerCredId && (
+                                    <span className="font-mono text-[10px] text-neutral-500 dark:text-neutral-400">
+                                      ({attempt.providerCredId})
+                                    </span>
+                                  )}
+                                  {attempt.code && attempt.code !== "SUCCESS" && (
+                                    <span className="rounded bg-rose-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                                      {attempt.code}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                  <span
+                                    className={`font-mono font-bold text-[11px] px-2 py-0.5 rounded-md ${
+                                      attempt.status === 200
+                                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                        : "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+                                    }`}
+                                  >
+                                    HTTP {attempt.status}
+                                  </span>
+                                  <span className="font-mono text-neutral-500 dark:text-neutral-400">
+                                    {attempt.latencyMs}ms
+                                  </span>
+                                </div>
                               </div>
 
-                              <div className="flex items-center gap-3">
-                                <span
-                                  className={`font-mono font-bold text-[11px] px-2 py-0.5 rounded-md ${
-                                    attempt.status === 200
-                                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
-                                      : "bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
-                                  }`}
-                                >
-                                  HTTP {attempt.status}
-                                </span>
-                                <span className="font-mono text-neutral-500 dark:text-neutral-400">
-                                  {attempt.latencyMs}ms
-                                </span>
-                              </div>
+                              {attempt.error && (
+                                <div className="rounded-xl border border-rose-200/70 bg-rose-50/70 px-3 py-2 font-mono text-[11px] text-rose-800 wrap-break-word whitespace-pre-wrap select-text dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+                                  {attempt.error}
+                                </div>
+                              )}
+
+                              {attempt.rawError && attempt.rawError !== attempt.error && (
+                                <div className="rounded-xl bg-neutral-900/95 px-3 py-2 font-mono text-[10px] text-neutral-200 wrap-break-word whitespace-pre-wrap select-text">
+                                  Raw: {attempt.rawError}
+                                </div>
+                              )}
+
+                              {attempt.hint && (
+                                <div className="text-[11px] text-amber-800 dark:text-amber-300">
+                                  <span className="font-semibold">Hint: </span>
+                                  {attempt.hint}
+                                </div>
+                              )}
                             </div>
                           ))
                         ) : (
@@ -677,7 +856,7 @@ export function ActivityFeed({
                               }`}
                             >
                               {activeItem.status === "failed" || activeItem.status === "bounced"
-                                ? `HTTP 502 (${activeItem.latencyMs}ms)`
+                                ? `HTTP ${activeItem.httpStatus || 502} (${activeItem.latencyMs}ms)`
                                 : `HTTP 200 (${activeItem.latencyMs}ms)`}
                             </span>
                           </div>

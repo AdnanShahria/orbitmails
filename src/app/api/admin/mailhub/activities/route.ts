@@ -4,6 +4,12 @@ import { requireSessionUser } from "@/lib/api/auth";
 import { isPrimaryAdmin } from "@/lib/auth/admin";
 import { getMailHubState } from "@/lib/mailhub/storage";
 import { getSendLogBuffer } from "@/lib/mailhub/logging";
+import {
+	cleanProviderErrorMessage,
+	getDeliveryDiagnosticsMap,
+	inferDiagnosticHint,
+	resolveAttemptHttpStatus,
+} from "@/lib/mailhub/diagnostics";
 import { INITIAL_ACTIVITIES } from "@/app/(admin)/mailhub/mock-data";
 import type {
 	MailHubActivityItem,
@@ -206,9 +212,17 @@ export async function GET(request: Request) {
 			});
 		}
 
+		// Load persisted rich delivery diagnostics for these log IDs
+		const rowIds = rawRows.slice(0, limit).map((r: any) => String(r.id)).filter(Boolean);
+		const diagnosticsMap = await getDeliveryDiagnosticsMap(rowIds, access.env as any);
+
 		// Format raw rows to match MailHubActivityItem exactly
 		const activities: MailHubActivityItem[] = rawRows
+			.slice(0, limit)
 			.map((row: any) => {
+				const rowId = String(row.id);
+				const diag = diagnosticsMap.get(rowId);
+
 				const rowProjectId = String(row.project_id || row.projectId || "production");
 				const project =
 					projectMap.get(rowProjectId) ||
@@ -220,20 +234,29 @@ export async function GET(request: Request) {
 				const providerId = normalizeProviderId(row.provider);
 				const sentAt = row.sent_at || row.sentAt || Date.now();
 				const timestamp = new Date(sentAt).toISOString();
-				const latencyMs = Number(row.latency_ms ?? row.latencyMs ?? 150);
+				const rawLatency = Number(row.latency_ms ?? row.latencyMs ?? 0);
+				const latencyMs =
+					rawLatency > 0
+						? rawLatency
+						: diag?.totalLatencyMs && diag.totalLatencyMs > 0
+						? diag.totalLatencyMs
+						: 0;
 				const toAddress = String(row.to_address || row.toAddress || row.recipient || "user@example.com");
 				const subject = String(row.subject || "(No Subject)");
 				const fromAddress =
-					row.from_address || row.fromAddress || "contact@orbitsaas.cloud";
+					diag?.fromAddress || row.from_address || row.fromAddress || "contact@orbitsaas.cloud";
 				const messageId =
 					row.provider_message_id ||
 					row.providerMessageId ||
 					row.messageId ||
 					`<${row.id || "msg"}@${projectSlug}.mailhub.internal>`;
 
+				const rawRowError: string | undefined =
+					(row.error_message || row.errorMessage || diag?.summaryError || undefined) ?? undefined;
+
 				const activityStatus: ActivityStatus = normalizeActivityStatus(
 					row.status,
-					row.error_message || row.errorMessage
+					rawRowError
 				);
 				const isFailed = activityStatus === "failed";
 
@@ -241,42 +264,102 @@ export async function GET(request: Request) {
 				const primaryProvider = project?.providerOrder?.[0]
 					? normalizeProviderId(project.providerOrder[0])
 					: undefined;
+				const diagHasFailover =
+					diag && diag.attempts.length > 1 && diag.attempts.some((a) => a.code !== "SUCCESS");
 				const wasFailover = Boolean(
 					row.was_failover ??
 						row.wasFailover ??
-						(primaryProvider && primaryProvider !== providerId)
+						(diagHasFailover || (primaryProvider && primaryProvider !== providerId))
 				);
 
+				const firstFailedDiag = diag?.attempts.find((a) => a.code !== "SUCCESS");
 				const failoverFrom = wasFailover
-					? (row.failover_from || row.failoverFrom || primaryProvider || "brevo")
+					? (row.failover_from ||
+						row.failoverFrom ||
+						firstFailedDiag?.provider ||
+						primaryProvider ||
+						"brevo")
 					: undefined;
 				const failoverReason = wasFailover
-					? (row.failover_reason || row.failoverReason || "Primary provider slice exhausted or rate-limited")
+					? (row.failover_reason ||
+						row.failoverReason ||
+						firstFailedDiag?.error ||
+						"Primary provider slice exhausted or failed")
 					: undefined;
 
-				const routeAttempts: RoutingAttempt[] = [
-					...(wasFailover && failoverFrom
-						? [
+				const routeAttempts: RoutingAttempt[] =
+					diag && diag.attempts.length > 0
+						? diag.attempts.map((a) => ({
+								provider: normalizeProviderId(a.provider),
+								providerCredId: a.providerCredId,
+								status: a.status,
+								code: a.code,
+								latencyMs: a.latencyMs,
+								error: a.error,
+								rawError: a.rawError,
+								hint: a.hint,
+								timestamp: a.timestamp,
+						  }))
+						: [
+								...(wasFailover && failoverFrom
+									? [
+											{
+												provider: normalizeProviderId(failoverFrom),
+												status: 429,
+												latencyMs: 35,
+												error: failoverReason || "Quota saturated",
+												timestamp: new Date(sentAt - latencyMs).toISOString(),
+											},
+									  ]
+									: []),
 								{
-									provider: normalizeProviderId(failoverFrom),
-									status: 429,
-									latencyMs: 35,
-									error: failoverReason || "Quota saturated",
-									timestamp: new Date(sentAt - latencyMs).toISOString(),
+									provider: providerId,
+									status: isFailed
+										? resolveAttemptHttpStatus({ message: rawRowError })
+										: 200,
+									latencyMs,
+									error: rawRowError ? cleanProviderErrorMessage(rawRowError) || rawRowError : undefined,
+									rawError: rawRowError,
+									hint: rawRowError
+										? inferDiagnosticHint({
+												provider: providerId,
+												errorMessage: rawRowError,
+										  })
+										: undefined,
+									timestamp,
 								},
-						  ]
-						: []),
-					{
-						provider: providerId,
-						status: isFailed ? 500 : 200,
-						latencyMs,
-						error: row.error_message || row.errorMessage || undefined,
-						timestamp,
-					},
-				];
+						  ];
+
+				const errorMessage = isFailed || activityStatus === "bounced"
+					? diag?.summaryError ||
+						(rawRowError ? cleanProviderErrorMessage(rawRowError) || rawRowError : undefined) ||
+						"Delivery failed without an error message recorded (legacy log)"
+					: undefined;
+
+				const errorCode =
+					diag?.errorCode ||
+					(isFailed
+						? rawRowError?.match(/\b(AUTHENTICATION_ERROR|QUOTA_EXCEEDED|INVALID_PAYLOAD|TRANSIENT_SERVER_ERROR|CIRCUIT_OPEN|NO_CANDIDATES|RESTRICTED_DOMAIN)\b/)?.[1]
+						: undefined);
+
+				const httpStatus =
+					diag?.httpStatus ||
+					(isFailed ? routeAttempts[routeAttempts.length - 1]?.status : undefined);
+
+				const diagnosticHint =
+					diag?.diagnosticHint ||
+					(isFailed
+						? inferDiagnosticHint({
+								provider: providerId,
+								errorCode,
+								errorMessage: rawRowError || errorMessage,
+								httpStatus,
+						  })
+						: undefined);
 
 				const item: MailHubActivityItem = {
-					id: String(row.id),
+					id: rowId,
+					deliveryId: diag?.deliveryId,
 					timestamp,
 					projectId: project ? project.id : rowProjectId,
 					projectName,
@@ -295,23 +378,27 @@ export async function GET(request: Request) {
 					htmlSnippet:
 						row.html_snippet ||
 						row.htmlSnippet ||
-						`<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;"><h3 style="margin: 0 0 8px 0; color: #111827; font-size: 16px;">${subject}</h3><p style="margin: 0 0 12px 0; color: #4b5563; font-size: 13px;">Notification sent via ${projectName}.</p><div style="background: #f8fafc; padding: 12px; border-radius: 8px; font-size: 12px; color: #334155;">Delivered via ${providerId.toUpperCase()} &middot; Latency: ${latencyMs}ms</div></div>`,
+						`<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; background: #ffffff;"><h3 style="margin: 0 0 8px 0; color: #111827; font-size: 16px;">${subject}</h3><p style="margin: 0 0 12px 0; color: #4b5563; font-size: 13px;">Notification sent via ${projectName}.</p><div style="background: #f8fafc; padding: 12px; border-radius: 8px; font-size: 12px; color: #334155;">${isFailed ? `Failed via ${providerId.toUpperCase()}: ${errorMessage}` : `Delivered via ${providerId.toUpperCase()} &middot; Latency: ${latencyMs}ms`}</div></div>`,
 					textContent:
 						row.text_content ||
 						row.textContent ||
-						`${subject}\n\nNotification sent via ${projectName}.\nDelivered via ${providerId.toUpperCase()} (Latency: ${latencyMs}ms)`,
+						`${subject}\n\nNotification sent via ${projectName}.\n${isFailed ? `Failed via ${providerId.toUpperCase()}: ${errorMessage}` : `Delivered via ${providerId.toUpperCase()} (Latency: ${latencyMs}ms)`}`,
 					provider: providerId,
 					wasFailover,
 					failoverFrom: failoverFrom ? normalizeProviderId(failoverFrom) : undefined,
 					failoverReason,
 					status: activityStatus,
+					errorMessage,
+					errorCode,
+					httpStatus,
+					diagnosticHint,
+					diagnosticsStage: diag?.stage,
 					latencyMs,
 					routeAttempts,
 				};
 
 				return item;
-			})
-			.slice(0, limit);
+			});
 
 		return NextResponse.json(
 			{

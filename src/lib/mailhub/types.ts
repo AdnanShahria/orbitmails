@@ -137,6 +137,7 @@ export interface SendLogEntry {
 	dateBucket: string; // YYYY-MM-DD UTC date bucket
 	htmlSnippet?: string | null;
 	textContent?: string | null;
+	diagnostics?: import("./diagnostics").DeliveryDiagnostics;
 }
 
 export interface SendLogBatchOptions {

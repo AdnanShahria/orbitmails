@@ -10,6 +10,7 @@
  */
 
 import { openQueue } from "@/../server/runtime/queue";
+import { recordDeliveryDiagnostics, type DeliveryDiagnostics } from "./diagnostics";
 import type { BatchFlushResult, MailHubEnv, SendLogBatchOptions, SendLogEntry, SendLogStatus } from "./types";
 
 const DEFAULT_BATCH_SIZE = 50;
@@ -33,6 +34,7 @@ export function createSendLogEntry(params: {
 	latencyMs: number;
 	sentAt?: number;
 	id?: string;
+	diagnostics?: DeliveryDiagnostics;
 }): SendLogEntry {
 	const sentAt = params.sentAt ?? Date.now();
 	const dateBucket = new Date(sentAt).toISOString().slice(0, 10);
@@ -47,7 +49,7 @@ export function createSendLogEntry(params: {
 		subject: params.subject ? params.subject.slice(0, 500) : null,
 		status: params.status,
 		providerMessageId: params.providerMessageId ?? null,
-		errorMessage: params.errorMessage ? params.errorMessage.slice(0, 1000) : null,
+		errorMessage: params.errorMessage ? params.errorMessage.slice(0, 2000) : null,
 		latencyMs: Math.max(0, Math.round(params.latencyMs)),
 		sentAt,
 		dateBucket,
@@ -58,6 +60,9 @@ export function createSendLogEntry(params: {
 	}
 	if (params.textContent !== undefined) {
 		entry.textContent = params.textContent ? params.textContent.slice(0, 2000) : null;
+	}
+	if (params.diagnostics !== undefined) {
+		entry.diagnostics = params.diagnostics;
 	}
 
 	return entry;
@@ -158,6 +163,15 @@ export async function flushBatchToD1(
 
 	const startTime = Date.now();
 	const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+
+	const entriesWithDiagnostics = entries.filter((e) => Boolean(e.diagnostics));
+	if (entriesWithDiagnostics.length > 0) {
+		await Promise.allSettled(
+			entriesWithDiagnostics.map((e) =>
+				recordDeliveryDiagnostics(e.id, e.projectId, e.diagnostics!, env),
+			),
+		);
+	}
 
 	if (!env.DB) {
 		// If DB is missing, check KV spillover
@@ -414,6 +428,14 @@ export function recordSendLogAsync(
 	env: MailHubEnv,
 	ctx?: { waitUntil: (p: Promise<any>) => void },
 ): void {
+	// Persist rich diagnostics immediately if attached
+	if (entry.diagnostics) {
+		const diagPromise = recordDeliveryDiagnostics(entry.id, entry.projectId, entry.diagnostics, env).catch(() => {});
+		if (ctx?.waitUntil) {
+			ctx.waitUntil(diagPromise);
+		}
+	}
+
 	// 1. Cloudflare Queue Producer (Production Binding)
 	const queueBinding = env.ROUTER_LOG_QUEUE || env.SEND_LOG_QUEUE;
 	if (queueBinding && typeof queueBinding.send === "function") {

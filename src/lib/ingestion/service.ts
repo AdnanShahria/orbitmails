@@ -39,6 +39,11 @@ import {
 	createSendLogEntry,
 	flushBatchToD1,
 } from "@/lib/mailhub/logging";
+import {
+	buildDeliveryDiagnostics,
+	cleanProviderErrorMessage,
+	formatAttemptsErrorSummary,
+} from "@/lib/mailhub/diagnostics";
 import { resolveCanonicalOutboundSender } from "@/lib/mailhub/providers/utils";
 import type { RankedProvider } from "@/lib/mailhub/types";
 import { normalizePayload } from "./normalizer";
@@ -163,6 +168,36 @@ export async function sendSingleNormalizedMessage(
 	// 1. Authorize sender domain
 	const authDomain = await authorizeDomainForProject(env, payload.from, auth);
 	if (!authDomain.authorized) {
+		if (auth.projectId) {
+			try {
+				const errObj = Object.assign(new Error(authDomain.error), {
+					statusCode: authDomain.statusCode,
+					code: "RESTRICTED_DOMAIN",
+				});
+				const diagnostics = buildDeliveryDiagnostics({
+					fallbackError: errObj,
+					fallbackProvider: "routing",
+					stage: "validation",
+					fromAddress: payload.from,
+					totalLatencyMs: 1,
+				});
+				const logEntry = createSendLogEntry({
+					projectId: auth.projectId,
+					providerCredId: "routing_validation",
+					provider: "cloudflare",
+					toAddress: payload.to.join(", "),
+					subject: payload.subject,
+					htmlSnippet: payload.html ? payload.html.slice(0, 1500) : null,
+					textContent: payload.text ? payload.text.slice(0, 1000) : null,
+					status: "failed",
+					errorMessage: `[ROUTING RESTRICTED_DOMAIN HTTP ${authDomain.statusCode}] ${authDomain.error}`,
+					latencyMs: 1,
+					sentAt: Date.now(),
+					diagnostics,
+				});
+				await flushBatchToD1([logEntry], env as any);
+			} catch {}
+		}
 		const error = new Error(authDomain.error);
 		(error as any).statusCode = authDomain.statusCode;
 		(error as any).name = "restricted_domain";
@@ -292,14 +327,74 @@ export async function sendSingleNormalizedMessage(
 			attachments: payload.attachments.length > 0 ? payload.attachments : undefined,
 		};
 
-		const failoverResult = await sendWithFailover({
-			env: env as any,
-			projectId: auth.projectId,
-			deliveryId: newId("dlv"),
-			message: outboundMessage,
-			candidates: effectiveCandidates.length > 0 ? effectiveCandidates : candidates,
-			dateBucket,
-		});
+		const deliveryId = newId("dlv");
+		const dispatchStart = Date.now();
+		let failoverResult: Awaited<ReturnType<typeof sendWithFailover>>;
+
+		try {
+			failoverResult = await sendWithFailover({
+				env: env as any,
+				projectId: auth.projectId,
+				deliveryId,
+				message: outboundMessage,
+				candidates: effectiveCandidates.length > 0 ? effectiveCandidates : candidates,
+				dateBucket,
+			});
+		} catch (sendErr: any) {
+			const elapsedMs = Math.max(1, Date.now() - dispatchStart);
+			if (acquiredCandidate && acquiredCandidate.dailySlice > 0) {
+				await refundQuota(env, {
+					projectId: auth.projectId,
+					providerId: acquiredCandidate.providerCredId,
+					dateBucket,
+				});
+			}
+
+			const providerUsed =
+				sendErr?.provider ||
+				effectiveCandidates[0]?.provider ||
+				candidates[0]?.provider ||
+				"cloudflare";
+			const providerCredId =
+				effectiveCandidates[0]?.providerCredId ||
+				candidates[0]?.providerCredId ||
+				`cred_${providerUsed}_main`;
+
+			const diagnostics = buildDeliveryDiagnostics({
+				deliveryId,
+				fallbackError: sendErr,
+				fallbackProvider: providerUsed,
+				fallbackProviderCredId: providerCredId,
+				stage: sendErr?.code === "INVALID_PAYLOAD" ? "validation" : "provider_attempt",
+				fromAddress: canonicalSender.from,
+				totalLatencyMs: elapsedMs,
+			});
+
+			const realError =
+				diagnostics.summaryError ||
+				cleanProviderErrorMessage(sendErr?.message) ||
+				"Email delivery failed";
+
+			try {
+				const logEntry = createSendLogEntry({
+					projectId: auth.projectId,
+					providerCredId,
+					provider: providerUsed,
+					toAddress: payload.to.join(", "),
+					subject: payload.subject,
+					htmlSnippet: payload.html ? payload.html.slice(0, 1500) : null,
+					textContent: payload.text ? payload.text.slice(0, 1000) : null,
+					status: "failed",
+					errorMessage: realError,
+					latencyMs: elapsedMs,
+					sentAt: Date.now(),
+					diagnostics,
+				});
+				await flushBatchToD1([logEntry], env as any);
+			} catch {}
+
+			throw sendErr;
+		}
 
 		// 4d. Post-send handling: adjust quota, record Sent copy in D1 messages, and log
 		if (failoverResult.success) {
@@ -375,6 +470,17 @@ export async function sendSingleNormalizedMessage(
 
 			// Record send log in email_router_send_logs via createSendLogEntry & flushBatchToD1
 			try {
+				const successDiagnostics =
+					failoverResult.failoverCount > 0 || failoverResult.attempts.length > 1
+						? buildDeliveryDiagnostics({
+								deliveryId: failoverResult.deliveryId,
+								attempts: failoverResult.attempts,
+								fromAddress: canonicalSender.from,
+								totalLatencyMs: failoverResult.latencyMs || 0,
+								stage: "delivered",
+						  })
+						: undefined;
+
 				const logEntry = createSendLogEntry({
 					projectId: auth.projectId,
 					providerCredId: failoverResult.providerCredId || "unknown",
@@ -387,6 +493,7 @@ export async function sendSingleNormalizedMessage(
 					providerMessageId: failoverResult.providerMessageId || failoverResult.messageId,
 					latencyMs: failoverResult.latencyMs || 0,
 					sentAt: failoverResult.timestamp || Date.now(),
+					diagnostics: successDiagnostics,
 				});
 				await flushBatchToD1([logEntry], env as any);
 			} catch (logErr) {
@@ -408,11 +515,34 @@ export async function sendSingleNormalizedMessage(
 			});
 		}
 
-		// Record failure log
-		const lastAttempt = failoverResult.failedAttempts?.[failoverResult.failedAttempts.length - 1];
+		// Record failure log with real error chain and full diagnostics
+		const elapsedMs = Math.max(1, Date.now() - dispatchStart);
+		const failedAttempts = failoverResult.failedAttempts || [];
+		const lastAttempt = failedAttempts[failedAttempts.length - 1];
+		const attemptsLatencySum = failedAttempts.reduce((sum, a) => sum + (a.latencyMs || 0), 0);
+		const totalLatencyMs = attemptsLatencySum > 0 ? attemptsLatencySum : elapsedMs;
+
+		const diagnostics = buildDeliveryDiagnostics({
+			deliveryId: failoverResult.deliveryId,
+			attempts: failedAttempts,
+			fallbackError: failoverResult.message,
+			fallbackProvider: lastAttempt?.provider || "unknown",
+			fallbackProviderCredId: lastAttempt?.providerCredId,
+			fromAddress: canonicalSender.from,
+			totalLatencyMs,
+			stage: "failover_exhausted",
+		});
+
+		const realErrorSummary =
+			diagnostics.summaryError ||
+			formatAttemptsErrorSummary(failedAttempts) ||
+			lastAttempt?.message ||
+			failoverResult.message ||
+			"Delivery failed across all providers";
+
 		const failureDetail = lastAttempt?.message
-			? `Email delivery failed (${lastAttempt.provider}): ${lastAttempt.message}`
-			: failoverResult.message || "Email delivery failed across all candidate providers";
+			? `Email delivery failed (${lastAttempt.provider}): ${cleanProviderErrorMessage(lastAttempt.message) || lastAttempt.message}`
+			: realErrorSummary;
 
 		try {
 			const logEntry = createSendLogEntry({
@@ -424,9 +554,10 @@ export async function sendSingleNormalizedMessage(
 				htmlSnippet: payload.html ? payload.html.slice(0, 1500) : null,
 				textContent: payload.text ? payload.text.slice(0, 1000) : null,
 				status: "failed",
-				errorMessage: lastAttempt?.message || failoverResult.message || "Delivery failed across all providers",
-				latencyMs: 0,
+				errorMessage: realErrorSummary,
+				latencyMs: totalLatencyMs,
 				sentAt: Date.now(),
+				diagnostics,
 			});
 			await flushBatchToD1([logEntry], env as any);
 		} catch {}

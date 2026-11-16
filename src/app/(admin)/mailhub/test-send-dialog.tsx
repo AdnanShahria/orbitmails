@@ -40,18 +40,22 @@ export function TestSendDialog({
   const [routingMode, setRoutingMode] = useState<"auto" | ProviderId>("auto");
   const [isSending, setIsSending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [diagnosticHint, setDiagnosticHint] = useState<string | null>(null);
   const [resultTrace, setResultTrace] = useState<{
     success: boolean;
     providerUsed: ProviderId;
     latencyMs: number;
     messageId?: string;
     deliveryId?: string;
-    waterfall: Array<{ provider: string; status: number; message?: string; error?: string; latencyMs?: number }>;
+    waterfall: Array<{ provider: string; status: number; code?: string; message?: string; error?: string; hint?: string; latencyMs?: number }>;
   } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setErrorMessage(null);
+      setErrorCode(null);
+      setDiagnosticHint(null);
       setResultTrace(null);
     }
   }, [isOpen, project?.id]);
@@ -62,6 +66,8 @@ export function TestSendDialog({
     if (!project) return;
     setIsSending(true);
     setErrorMessage(null);
+    setErrorCode(null);
+    setDiagnosticHint(null);
     setResultTrace(null);
 
     try {
@@ -86,16 +92,20 @@ export function TestSendDialog({
           data?.result?.attempts?.find((a: any) => a.code !== "SUCCESS")?.message ||
           `Failed to send test email (HTTP ${res.status})`;
         setErrorMessage(typeof errorText === "string" ? errorText : JSON.stringify(errorText));
+        setErrorCode(data?.errorCode || null);
+        setDiagnosticHint(data?.diagnosticHint || null);
 
         if (data?.result?.waterfall || data?.result?.attempts) {
           const resResult = data.result || {};
           const providerUsed: ProviderId = resResult.providerUsed || project.primaryProvider;
-          const waterfall: Array<{ provider: string; status: number; message?: string; error?: string; latencyMs?: number }> =
+          const waterfall: Array<{ provider: string; status: number; code?: string; message?: string; error?: string; hint?: string; latencyMs?: number }> =
             resResult.waterfall ||
             resResult.attempts?.map((a: any) => ({
               provider: getProviderDisplayName(a.provider),
               status: a.status || (a.code === "SUCCESS" ? 200 : a.code === "QUOTA_EXCEEDED" ? 429 : 500),
+              code: a.code,
               message: a.message || a.error || "Attempt failed",
+              hint: a.hint,
               latencyMs: a.latencyMs,
             })) || [];
 
@@ -107,6 +117,15 @@ export function TestSendDialog({
             waterfall,
           });
         }
+
+        // Refresh dashboard stream so the failed log and its diagnostics appear immediately
+        onSuccessSend?.({
+          projectId: project.id,
+          recipient,
+          subject,
+          provider: data?.result?.providerUsed || project.primaryProvider,
+          latencyMs: data?.result?.latencyMs || 0,
+        });
 
         setIsSending(false);
         return;
@@ -215,7 +234,7 @@ export function TestSendDialog({
               value={senderAddress}
               placeholder="contact@orbitsaas.cloud (or custom Reply-To address)"
               onChange={(e) => setSenderAddress(e.target.value)}
-              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
 
@@ -228,7 +247,7 @@ export function TestSendDialog({
               value={recipient}
               placeholder="recipient@example.com"
               onChange={(e) => setRecipient(e.target.value)}
-              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
 
@@ -240,7 +259,7 @@ export function TestSendDialog({
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />
           </div>
 
@@ -253,7 +272,7 @@ export function TestSendDialog({
               onChange={(e) =>
                 setRoutingMode(e.target.value as "auto" | ProviderId)
               }
-              className="mt-1.5 min-h-[44px] w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs font-medium text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs font-medium text-neutral-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
             >
               <option value="auto">
                 Automatic Smart Waterfall (Primary + Quota Slice + Fallback)
@@ -268,14 +287,27 @@ export function TestSendDialog({
 
           {/* Error Banner */}
           {errorMessage && (
-            <div className="rounded-2xl border border-rose-200/80 bg-rose-50/80 p-3.5 text-xs dark:border-rose-900/60 dark:bg-rose-950/30">
+            <div className="rounded-2xl border border-rose-200/80 bg-rose-50/80 p-3.5 text-xs dark:border-rose-900/60 dark:bg-rose-950/30 space-y-2">
               <div className="flex items-start gap-2 text-rose-800 dark:text-rose-300">
                 <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
-                <div className="min-w-0">
-                  <span className="font-semibold">Dispatch Failed: </span>
-                  <span>{errorMessage}</span>
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-semibold">Dispatch Failed:</span>
+                    {errorCode && (
+                      <span className="rounded bg-rose-200/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-rose-900 dark:bg-rose-900/60 dark:text-rose-200">
+                        {errorCode}
+                      </span>
+                    )}
+                  </div>
+                  <div className="font-mono text-[11px] wrap-break-word whitespace-pre-wrap">{errorMessage}</div>
                 </div>
               </div>
+              {diagnosticHint && (
+                <div className="rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-[11px] text-amber-950 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-200">
+                  <span className="font-bold">How to fix: </span>
+                  <span>{diagnosticHint}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -367,7 +399,7 @@ export function TestSendDialog({
             variant="outline"
             size="sm"
             onClick={onClose}
-            className="min-h-[44px] px-4 rounded-xl border-neutral-200 text-xs font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="min-h-11 px-4 rounded-xl border-neutral-200 text-xs font-medium text-neutral-700 dark:border-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800"
           >
             Close
           </Button>
@@ -377,7 +409,7 @@ export function TestSendDialog({
             size="sm"
             disabled={isSending || !recipient.trim() || !subject.trim()}
             onClick={handleExecuteTest}
-            className="min-h-[44px] px-5 gap-2 rounded-xl bg-blue-600 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+            className="min-h-11 px-5 gap-2 rounded-xl bg-blue-600 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
           >
             {isSending ? (
               <RefreshCw className="h-4 w-4 animate-spin" />

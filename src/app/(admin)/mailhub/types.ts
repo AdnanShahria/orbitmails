@@ -42,14 +42,19 @@ export type ActivityStatus = "delivered" | "sent" | "bounced" | "failed";
 
 export type RoutingAttempt = {
   provider: ProviderId;
+  providerCredId?: string;
   status: number;
+  code?: string;
   latencyMs: number;
   error?: string;
+  rawError?: string;
+  hint?: string;
   timestamp: string;
 };
 
 export type MailHubActivityItem = {
   id: string;
+  deliveryId?: string;
   timestamp: string;
   projectId: string;
   projectName: string;
@@ -65,6 +70,11 @@ export type MailHubActivityItem = {
   failoverFrom?: ProviderId;
   failoverReason?: string;
   status: ActivityStatus;
+  errorMessage?: string;
+  errorCode?: string;
+  httpStatus?: number;
+  diagnosticHint?: string;
+  diagnosticsStage?: string;
   latencyMs: number;
   routeAttempts: RoutingAttempt[];
 };

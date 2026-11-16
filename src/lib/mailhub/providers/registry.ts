@@ -8,6 +8,7 @@ import {
 import { ProviderError, wrapAsProviderError } from "./error";
 import { MailgunAdapter } from "./mailgun";
 import { ResendAdapter } from "./resend";
+import { SendPulseAdapter } from "./sendpulse";
 import { SesAdapter } from "./ses";
 import type {
 	AnyProviderCredentials,
@@ -21,6 +22,7 @@ import { ZeptoMailAdapter } from "./zeptomail";
 const adapters: Record<MailHubProviderType, ProviderAdapter> = {
 	brevo: new BrevoAdapter(),
 	resend: new ResendAdapter(),
+	sendpulse: new SendPulseAdapter(),
 	ses: new SesAdapter(),
 	zeptomail: new ZeptoMailAdapter(),
 	mailgun: new MailgunAdapter(),

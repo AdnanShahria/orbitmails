@@ -9,7 +9,7 @@ export type CircuitBreakerState = "closed" | "half-open" | "open";
 
 export interface ProviderCredential {
 	id: string;
-	provider: "brevo" | "resend" | "ses" | "zepto" | "mailgun" | "cloudflare" | string;
+	provider: "brevo" | "resend" | "sendpulse" | "ses" | "zepto" | "mailgun" | "cloudflare" | string;
 	label?: string | null;
 	apiKeyEnc?: string;
 	dailyLimit: number;
@@ -101,6 +101,7 @@ export interface MailHubEnv {
 	SEND_QUEUE?: any;
 	BREVO_API_KEY?: string;
 	RESEND_API_KEY?: string;
+	SENDPULSE_API_KEY?: string;
 	ZEPTOMAIL_API_KEY?: string;
 	ZEPTO_API_KEY?: string;
 	[key: string]: any;

@@ -97,6 +97,7 @@ test("MailHub Crypto: decryptCredentialsRecord handles nested objects", async ()
 test("MailHub Registry: returns correct adapter instance", () => {
 	assert.ok(mailhub.isSupportedProvider("brevo"));
 	assert.ok(mailhub.isSupportedProvider("resend"));
+	assert.ok(mailhub.isSupportedProvider("sendpulse"));
 	assert.ok(mailhub.isSupportedProvider("ses"));
 	assert.ok(mailhub.isSupportedProvider("zeptomail"));
 	assert.ok(mailhub.isSupportedProvider("mailgun"));
@@ -340,4 +341,61 @@ test("CloudflareEmailAdapter falls back to env.EMAIL when credentials.emailBindi
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
+});
+
+test("SendPulseAdapter dispatches base64 HTML payload and classifies errors", async () => {
+	const adapter = mailhub.getProviderAdapter("sendpulse");
+	assert.equal(adapter.provider, "sendpulse");
+
+	const originalFetch = globalThis.fetch;
+	const calls = [];
+	globalThis.fetch = async (url, init) => {
+		calls.push({ url, init });
+		return new Response(JSON.stringify({ result: true, id: "sp-msg-123" }), { status: 200 });
+	};
+
+	try {
+		const res = await adapter.send(
+			{ apiKey: "sp_apikey_test_token" },
+			{
+				from: "OrbitMails <hello@example.com>",
+				to: ["User <user@example.com>"],
+				subject: "Hello SendPulse",
+				html: "<p>Hi ✨</p>",
+				text: "Hi",
+			},
+		);
+
+		assert.equal(res.success, true);
+		assert.equal(res.provider, "sendpulse");
+		assert.equal(res.providerMessageId, "sp-msg-123");
+		assert.equal(calls[0].url, "https://api.sendpulse.com/smtp/emails");
+		assert.equal(calls[0].init.headers.Authorization, "Bearer sp_apikey_test_token");
+		const parsedBody = JSON.parse(calls[0].init.body);
+		assert.equal(Buffer.from(parsedBody.email.html, "base64").toString("utf8"), "<p>Hi ✨</p>");
+		assert.deepEqual(parsedBody.email.from, { name: "OrbitMails", email: "hello@example.com" });
+		assert.deepEqual(parsedBody.email.to, [{ name: "User", email: "user@example.com" }]);
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+
+	assert.equal(adapter.parseError(new Error("Unauthorized"), 401).code, "AUTHENTICATION_ERROR");
+	assert.equal(adapter.parseError(new Error("Daily quota exceeded"), 429).code, "QUOTA_EXCEEDED");
+	assert.equal(adapter.parseError(new Error("Invalid sender"), 422).code, "INVALID_PAYLOAD");
+});
+
+test("resolveCandidateCredentials prioritizes server-side Worker env secrets", async () => {
+	const failover = await bundle("src/lib/mailhub/failover.ts", "mailhub-failover.mjs");
+
+	const sendpulseCreds = await failover.resolveCandidateCredentials(
+		{ provider: "sendpulse", providerCredId: "cred_sendpulse_main" },
+		{ SENDPULSE_API_KEY: "sp_apikey_server_env" },
+	);
+	assert.equal(sendpulseCreds.apiKey, "sp_apikey_server_env");
+
+	const resendCreds = await failover.resolveCandidateCredentials(
+		{ provider: "resend", providerCredId: "cred_resend_main" },
+		{ RESEND_API_KEY: "re_server_env" },
+	);
+	assert.equal(resendCreds.apiKey, "re_server_env");
 });

@@ -104,23 +104,39 @@ export async function resolveCandidateCredentials(
 		};
 	}
 
-	// 3. Query from D1 Database if bound
+	const providerType = candidate.provider.toLowerCase();
+	const envAny = env as Record<string, any>;
+	const processEnv: Record<string, any> = typeof process !== "undefined" && process.env ? process.env : {};
+
+	// 3. Prefer server-side Worker secrets / environment variables when configured
+	const envCredentials = resolveServerEnvCredentials(providerType, envAny, processEnv);
+	if (envCredentials) {
+		return envCredentials;
+	}
+
+	// 4. Query from D1 Database if bound
 	if (env.DB) {
 		try {
-			const providerTypeLower = candidate.provider.toLowerCase();
 			const row = await env.DB.prepare(
 				"SELECT id, provider, credentials_encrypted as creds FROM provider_credentials WHERE id = ? OR LOWER(provider) = ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END LIMIT 1",
-			).bind(candidate.providerCredId, providerTypeLower, candidate.providerCredId).first();
+			).bind(candidate.providerCredId, providerType, candidate.providerCredId).first();
 
 			if (row && row.creds) {
 				try {
 					const parsed = typeof row.creds === "string" ? JSON.parse(row.creds) : row.creds;
 					if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
-						if (providerTypeLower === "cloudflare") {
-							const envAny = env as Record<string, any>;
+						const hasSecret = Boolean(
+							parsed.apiKey ||
+								parsed.sendMailToken ||
+								parsed.accessKeyId ||
+								parsed.emailBinding,
+						);
+						if (providerType === "cloudflare") {
 							return { ...parsed, emailBinding: parsed.emailBinding || envAny.EMAIL };
 						}
-						return parsed;
+						if (hasSecret) {
+							return parsed;
+						}
 					}
 					if (typeof parsed === "string" && parsed.trim().length > 0) {
 						return { apiKey: parsed.trim(), provider: row.provider };
@@ -132,15 +148,11 @@ export async function resolveCandidateCredentials(
 				}
 			}
 		} catch {
-			// Fallback to environment variables
+			// Fallback to state.providers / appSettings
 		}
 	}
 
-	// 4. Fallback to environment variables, state.providers, or appSettings based on provider type
-	const providerType = candidate.provider.toLowerCase();
-	const envAny = env as Record<string, any>;
-	const processEnv: Record<string, any> = typeof process !== "undefined" && process.env ? process.env : {};
-
+	// 5. Fallback to state.providers or appSettings based on provider type
 	try {
 		const state = await getMailHubState(env);
 		const prov = state.providers?.find(
@@ -169,13 +181,12 @@ export async function resolveCandidateCredentials(
 	}
 
 	switch (providerType) {
-		case "brevo": {
-			const apiKey = envAny.BREVO_API_KEY || processEnv?.BREVO_API_KEY || "";
-			return { apiKey: apiKey.trim() };
-		}
+		case "brevo":
+		case "sendpulse":
+			return { apiKey: "" };
 		case "resend": {
-			let apiKey = envAny.RESEND_API_KEY || processEnv?.RESEND_API_KEY || "";
-			if (!apiKey && env.DB) {
+			let apiKey = "";
+			if (env.DB) {
 				try {
 					const row = await env.DB.prepare(
 						"SELECT resend_api_key FROM app_settings WHERE id = 'default' LIMIT 1",
@@ -190,25 +201,20 @@ export async function resolveCandidateCredentials(
 		case "zepto":
 		case "zeptomail":
 			return {
-				sendMailToken:
-					envAny.ZEPTOMAIL_API_KEY ||
-					envAny.ZEPTO_API_KEY ||
-					processEnv?.ZEPTOMAIL_API_KEY ||
-					processEnv?.ZEPTO_API_KEY ||
-					"",
+				sendMailToken: "",
 				bounceAddress: envAny.ZEPTOMAIL_BOUNCE_ADDRESS || processEnv?.ZEPTOMAIL_BOUNCE_ADDRESS,
 			};
 		case "mailgun":
 			return {
-				apiKey: envAny.MAILGUN_API_KEY || processEnv?.MAILGUN_API_KEY || "",
+				apiKey: "",
 				domain: envAny.MAILGUN_DOMAIN || processEnv?.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
 				region: envAny.MAILGUN_REGION || processEnv?.MAILGUN_REGION || "us",
 			};
 		case "ses": {
-			let accessKeyId = envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || processEnv?.AWS_ACCESS_KEY_ID || "";
-			let secretAccessKey = envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || processEnv?.AWS_SECRET_ACCESS_KEY || "";
+			let accessKeyId = "";
+			let secretAccessKey = "";
 			let region = envAny.AWS_REGION || envAny.S3_REGION || processEnv?.AWS_REGION || "us-east-1";
-			if ((!accessKeyId || !secretAccessKey) && env.DB) {
+			if (env.DB) {
 				try {
 					const row = await env.DB.prepare(
 						"SELECT aws_config FROM app_settings WHERE id = 'default' LIMIT 1",
@@ -216,8 +222,8 @@ export async function resolveCandidateCredentials(
 					if (row?.aws_config) {
 						const parsedAws = typeof row.aws_config === "string" ? JSON.parse(row.aws_config) : row.aws_config;
 						if (parsedAws && typeof parsedAws === "object") {
-							accessKeyId = accessKeyId || parsedAws.accessKeyId || "";
-							secretAccessKey = secretAccessKey || parsedAws.secretAccessKey || "";
+							accessKeyId = parsedAws.accessKeyId || "";
+							secretAccessKey = parsedAws.secretAccessKey || "";
 							region = parsedAws.region || region;
 						}
 					}
@@ -235,6 +241,76 @@ export async function resolveCandidateCredentials(
 			};
 		default:
 			return { apiKey: envAny.RESEND_API_KEY || processEnv?.RESEND_API_KEY || "unknown" };
+	}
+}
+
+function resolveServerEnvCredentials(
+	providerType: string,
+	envAny: Record<string, any>,
+	processEnv: Record<string, any>,
+): Record<string, any> | null {
+	switch (providerType) {
+		case "brevo": {
+			const apiKey = String(envAny.BREVO_API_KEY || processEnv?.BREVO_API_KEY || "").trim();
+			return apiKey ? { apiKey } : null;
+		}
+		case "resend": {
+			const apiKey = String(envAny.RESEND_API_KEY || processEnv?.RESEND_API_KEY || "").trim();
+			return apiKey ? { apiKey } : null;
+		}
+		case "sendpulse": {
+			const apiKey = String(envAny.SENDPULSE_API_KEY || processEnv?.SENDPULSE_API_KEY || "").trim();
+			return apiKey ? { apiKey } : null;
+		}
+		case "zepto":
+		case "zeptomail": {
+			const sendMailToken = String(
+				envAny.ZEPTOMAIL_API_KEY ||
+					envAny.ZEPTO_API_KEY ||
+					processEnv?.ZEPTOMAIL_API_KEY ||
+					processEnv?.ZEPTO_API_KEY ||
+					"",
+			).trim();
+			return sendMailToken
+				? {
+						sendMailToken,
+						bounceAddress: envAny.ZEPTOMAIL_BOUNCE_ADDRESS || processEnv?.ZEPTOMAIL_BOUNCE_ADDRESS,
+					}
+				: null;
+		}
+		case "mailgun": {
+			const apiKey = String(envAny.MAILGUN_API_KEY || processEnv?.MAILGUN_API_KEY || "").trim();
+			return apiKey
+				? {
+						apiKey,
+						domain: envAny.MAILGUN_DOMAIN || processEnv?.MAILGUN_DOMAIN || "mg.orbitsaas.cloud",
+						region: envAny.MAILGUN_REGION || processEnv?.MAILGUN_REGION || "us",
+					}
+				: null;
+		}
+		case "ses": {
+			const accessKeyId = String(
+				envAny.AWS_ACCESS_KEY_ID || envAny.S3_ACCESS_KEY_ID || processEnv?.AWS_ACCESS_KEY_ID || "",
+			).trim();
+			const secretAccessKey = String(
+				envAny.AWS_SECRET_ACCESS_KEY || envAny.S3_SECRET_ACCESS_KEY || processEnv?.AWS_SECRET_ACCESS_KEY || "",
+			).trim();
+			const region = String(
+				envAny.AWS_REGION || envAny.S3_REGION || processEnv?.AWS_REGION || "us-east-1",
+			).trim();
+			return accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey, region } : null;
+		}
+		case "cloudflare":
+			if (envAny.EMAIL || envAny.CF_TOKEN || processEnv?.CF_TOKEN) {
+				return {
+					emailBinding: envAny.EMAIL,
+					accountId: envAny.CF_ACCOUNT_ID || processEnv?.CF_ACCOUNT_ID,
+					apiKey: envAny.CF_TOKEN || processEnv?.CF_TOKEN,
+				};
+			}
+			return null;
+		default:
+			return null;
 	}
 }
 

@@ -98,6 +98,8 @@ export function getProviderDisplayName(id: ProviderId): string {
       return "Brevo";
     case "resend":
       return "Resend";
+    case "sendpulse":
+      return "SendPulse";
     case "ses":
       return "Amazon SES";
     case "zepto":
@@ -110,6 +112,7 @@ export function getProviderDisplayName(id: ProviderId): string {
 export function normalizeProviderId(providerStr?: string | null): ProviderId {
   const p = (providerStr || "brevo").toLowerCase();
   if (p.includes("resend")) return "resend";
+  if (p.includes("sendpulse")) return "sendpulse";
   if (p.includes("ses")) return "ses";
   if (p.includes("zepto")) return "zepto";
   if (p.includes("cloudflare")) return "cloudflare";
@@ -122,6 +125,8 @@ export function getProviderBrand(id: ProviderId): { bg: string; fg: string } {
       return { bg: "bg-blue-600", fg: "text-white" };
     case "resend":
       return { bg: "bg-neutral-900 dark:bg-neutral-100", fg: "text-white dark:text-neutral-900" };
+    case "sendpulse":
+      return { bg: "bg-emerald-600", fg: "text-white" };
     case "ses":
       return { bg: "bg-amber-600", fg: "text-white" };
     case "zepto":

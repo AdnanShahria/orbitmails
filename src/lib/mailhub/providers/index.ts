@@ -4,6 +4,7 @@ export * from "./crypto";
 export * from "./utils";
 export * from "./brevo";
 export * from "./resend";
+export * from "./sendpulse";
 export * from "./zeptomail";
 export * from "./ses";
 export * from "./mailgun";

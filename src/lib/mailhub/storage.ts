@@ -252,6 +252,15 @@ export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
 			configured: false,
 		},
 		{
+			id: "cred_sendpulse_main",
+			provider: "sendpulse",
+			label: "SendPulse SMTP API",
+			dailyLimit: 500,
+			costPerK: 0,
+			enabled: true,
+			configured: false,
+		},
+		{
 			id: "cred_ses_backup",
 			provider: "ses",
 			label: "AWS SES High-Volume Metered ($0.10/1k)",
@@ -732,12 +741,42 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 			string,
 			string | undefined
 		>;
+		const sendpulseEnvKey = String(envAny.SENDPULSE_API_KEY || processEnv.SENDPULSE_API_KEY || "").trim();
+		if (
+			sendpulseEnvKey &&
+			!state.providers.some((p) => p.id === "cred_sendpulse_main" || p.provider.toLowerCase() === "sendpulse")
+		) {
+			state.providers.push({
+				id: "cred_sendpulse_main",
+				provider: "sendpulse",
+				label: "SendPulse SMTP API",
+				dailyLimit: 500,
+				costPerK: 0,
+				enabled: true,
+				configured: true,
+				apiKeyMasked: maskKeyValue(sendpulseEnvKey),
+			});
+		}
+
 		for (const prov of state.providers) {
 			const pType = prov.provider.toLowerCase();
-			if (pType === "brevo" && (envAny.BREVO_API_KEY || processEnv.BREVO_API_KEY || prov.apiKeyEnc)) {
-				prov.configured = true;
-			} else if (pType === "resend" && (envAny.RESEND_API_KEY || processEnv.RESEND_API_KEY || prov.apiKeyEnc)) {
-				prov.configured = true;
+			if (pType === "brevo") {
+				const envKey = String(envAny.BREVO_API_KEY || processEnv.BREVO_API_KEY || "").trim();
+				if (envKey || prov.apiKeyEnc) {
+					prov.configured = true;
+					if (envKey && !prov.apiKeyMasked) prov.apiKeyMasked = maskKeyValue(envKey);
+				}
+			} else if (pType === "resend") {
+				const envKey = String(envAny.RESEND_API_KEY || processEnv.RESEND_API_KEY || "").trim();
+				if (envKey || prov.apiKeyEnc) {
+					prov.configured = true;
+					if (envKey && !prov.apiKeyMasked) prov.apiKeyMasked = maskKeyValue(envKey);
+				}
+			} else if (pType === "sendpulse") {
+				if (sendpulseEnvKey || prov.apiKeyEnc) {
+					prov.configured = true;
+					if (sendpulseEnvKey && !prov.apiKeyMasked) prov.apiKeyMasked = maskKeyValue(sendpulseEnvKey);
+				}
 			} else if ((pType === "zepto" || pType === "zeptomail") && (envAny.ZEPTOMAIL_API_KEY || envAny.ZEPTO_API_KEY || prov.apiKeyEnc)) {
 				prov.configured = true;
 			} else if (pType === "ses" && ((envAny.AWS_ACCESS_KEY_ID && envAny.AWS_SECRET_ACCESS_KEY) || prov.apiKeyEnc)) {

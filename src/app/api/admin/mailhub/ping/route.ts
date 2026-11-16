@@ -38,6 +38,7 @@ const pingSchema = z.object({
 const PROVIDER_TARGET_ENDPOINTS: Record<string, string> = {
 	brevo: "https://api.brevo.com/v3/account",
 	resend: "https://api.resend.com/api-keys",
+	sendpulse: "https://api.sendpulse.com/smtp/emails",
 	ses: "https://email.us-east-1.amazonaws.com",
 	zepto: "https://api.zeptomail.com/v1.1/email",
 	zeptomail: "https://api.zeptomail.com/v1.1/email",

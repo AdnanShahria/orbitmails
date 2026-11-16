@@ -1,4 +1,4 @@
-export type ProviderId = "brevo" | "resend" | "ses" | "zepto" | "cloudflare";
+export type ProviderId = "brevo" | "resend" | "sendpulse" | "ses" | "zepto" | "cloudflare";
 
 export type ProviderHealth = "active" | "circuit_broken" | "quota_reached" | "warning";
 

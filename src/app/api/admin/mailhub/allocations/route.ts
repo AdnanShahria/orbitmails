@@ -84,16 +84,18 @@ export async function GET(request: Request) {
 			}
 		}
 
-		// Calculate aggregated sums for each provider
+		// Calculate aggregated sums for each provider (strip raw secret fields)
 		const providersWithStats = state.providers.map((prov) => {
 			const provAllocations = state.allocations.filter((a) => a.providerId === prov.id);
 			const totalAllocated = provAllocations.reduce((sum, a) => sum + a.dailySlice, 0);
 			const totalUsedToday = provAllocations.reduce((sum, a) => sum + (a.usedToday || 0), 0);
 			const remainingBuffer = Math.max(0, prov.dailyLimit - totalAllocated);
 			const isOverAllocated = totalAllocated > prov.dailyLimit;
+			const { apiKeyEnc: _omitEnc, ...safeProv } = prov as typeof prov & { secretKey?: string };
+			delete (safeProv as { secretKey?: string }).secretKey;
 
 			return {
-				...prov,
+				...safeProv,
 				totalAllocated,
 				totalUsedToday,
 				remainingBuffer,

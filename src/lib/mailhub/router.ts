@@ -377,6 +377,23 @@ export async function resolveProjectAllocations(
 		});
 	}
 
+	if (env.SENDPULSE_API_KEY) {
+		fallbackList.push({
+			projectId,
+			providerCredId: "cred_sendpulse_default",
+			dailySlice: 500,
+			priority: 3,
+			credential: {
+				id: "cred_sendpulse_default",
+				provider: "sendpulse",
+				label: "SendPulse (Env)",
+				dailyLimit: 500,
+				costPerK: 0,
+				enabled: true,
+			},
+		});
+	}
+
 	if (env.EMAIL) {
 		fallbackList.push({
 			projectId,

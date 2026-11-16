@@ -279,6 +279,7 @@ export function TestSendDialog({
               </option>
               <option value="brevo">Force Brevo</option>
               <option value="resend">Force Resend</option>
+              <option value="sendpulse">Force SendPulse</option>
               <option value="ses">Force Amazon SES</option>
               <option value="zepto">Force ZeptoMail</option>
               <option value="cloudflare">Force Cloudflare Direct</option>

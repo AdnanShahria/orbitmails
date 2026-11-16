@@ -7,6 +7,7 @@ import type {
 export type MailHubProviderType =
 	| "brevo"
 	| "resend"
+	| "sendpulse"
 	| "ses"
 	| "zeptomail"
 	| "mailgun"
@@ -42,6 +43,10 @@ export interface BrevoCredentials {
 }
 
 export interface ResendCredentials {
+	apiKey: string;
+}
+
+export interface SendPulseCredentials {
 	apiKey: string;
 }
 
@@ -86,6 +91,7 @@ export interface CloudflareCredentials {
 export type AnyProviderCredentials =
 	| ({ provider: "brevo" } & BrevoCredentials)
 	| ({ provider: "resend" } & ResendCredentials)
+	| ({ provider: "sendpulse" } & SendPulseCredentials)
 	| ({ provider: "ses" } & SesCredentials)
 	| ({ provider: "zeptomail" } & ZeptoMailCredentials)
 	| ({ provider: "mailgun" } & MailgunCredentials)

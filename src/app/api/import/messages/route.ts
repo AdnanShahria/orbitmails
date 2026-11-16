@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { folders } from "@/db/schema";
 import { requireUser } from "@/lib/auth/cookies";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { getEnv } from "@/lib/cloudflare";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { getImportMessageUserId } from "@/lib/import/destination";
@@ -12,6 +13,7 @@ import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import { parseImportForm } from "./utils";
 
 export async function POST(request: Request) {
+	if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 	const env = getEnv();
 	const user = await requireUser(env, request);
 	let input: Awaited<ReturnType<typeof parseImportForm>>;

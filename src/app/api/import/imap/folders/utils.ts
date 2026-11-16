@@ -1,4 +1,5 @@
 import type { ImapImportInput } from "@/lib/import/imap-types";
+import { assertSafeImapPort } from "@/lib/import/imap-utils";
 import type { ImapFolderListRequest } from "./types";
 
 export function parseImapFolderListRequest(input: ImapFolderListRequest): Omit<ImapImportInput, "folder" | "limit" | "offset"> {
@@ -8,7 +9,7 @@ export function parseImapFolderListRequest(input: ImapFolderListRequest): Omit<I
 	const password = input.password ?? "";
 
 	if (!host) throw new Error("IMAP host is required");
-	if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("IMAP port is invalid");
+	assertSafeImapPort(port);
 	if (!username || !password) throw new Error("IMAP username and password are required");
 
 	return {

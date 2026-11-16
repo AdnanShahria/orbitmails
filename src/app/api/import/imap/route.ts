@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { folders } from "@/db/schema";
 import { requireUser } from "@/lib/auth/cookies";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { getEnv } from "@/lib/cloudflare";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { readJsonBody } from "@/lib/http/request";
@@ -13,13 +14,14 @@ import type { ImapImportRequest } from "./types";
 import { parseImapImportRequest } from "./utils";
 
 export async function POST(request: Request) {
+	if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 	const env = getEnv();
 	const user = await requireUser(env, request);
 	let input: ReturnType<typeof parseImapImportRequest>;
 	try {
 		const body = await readJsonBody<ImapImportRequest>(request, 64 * 1024);
 		input = parseImapImportRequest(body);
-		assertSafeImapHost(input.spec.host);
+		assertSafeImapHost(input.spec.host, input.spec.port);
 	} catch (error) {
 		const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
 		return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid IMAP import request" }, { status });

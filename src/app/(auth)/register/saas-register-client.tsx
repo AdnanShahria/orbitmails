@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TurnstileField } from "@/components/auth/turnstile";
 import { clearClientSessionToken } from "@/lib/auth/client";
+import { safeRedirectUrl } from "@/lib/security/redirect";
 import { cn } from "@/lib/utils";
 
 interface SaasRegisterClientProps {
@@ -114,7 +115,7 @@ export function SaasRegisterClient({ availableDomains = ["orbitmails.com"] }: Sa
       }
 
       clearClientSessionToken();
-      router.replace(data.redirect || "/inbox");
+      router.replace(safeRedirectUrl(data.redirect, "/inbox"));
       router.refresh();
     } catch (err) {
       setError("Network error occurred. Please try again.");

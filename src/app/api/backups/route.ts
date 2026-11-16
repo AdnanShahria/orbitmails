@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertPrimaryAdmin } from "@/lib/auth/admin";
 import { requireUser } from "@/lib/auth/cookies";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { getBackupConfigurationStatus } from "@/lib/backups/export";
 import { runDatabaseBackup } from "@/lib/backups/runner";
 import {
@@ -39,6 +40,7 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
 	try {
 		const { env } = await requireAdmin(request);
+		if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 		const input = parseBackupSettingsInput(await request.json());
 		if (!input) return NextResponse.json({ error: "Invalid backup settings" }, { status: 400 });
 		await updateBackupSettings(env, input);
@@ -51,6 +53,7 @@ export async function PUT(request: Request) {
 export async function POST(request: Request) {
 	try {
 		const { env, user } = await requireAdmin(request);
+		if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 		const backupId = await createBackupRecord(env, "manual", user.id);
 		await runDatabaseBackup(env, backupId);
 		return NextResponse.json({ backupId });

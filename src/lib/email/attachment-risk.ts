@@ -102,8 +102,13 @@ export function inspectZipDirectory(tail: Uint8Array, centralDirectory: (offset:
 		if (position + 46 + nameLength > directory.byteLength) break;
 		if (flags & 1) encrypted = true;
 		const name = new TextDecoder().decode(directory.subarray(position + 46, position + 46 + nameLength));
-		const inner = assessAttachmentRisk({ filename: name.split("/").pop() ?? name });
+		const normalized = name.replace(/\\/g, "/");
+		const basename = normalized.split("/").filter(Boolean).pop() ?? normalized;
+		const inner = assessAttachmentRisk({ filename: basename });
 		if (inner.level !== "ok") risks.push({ level: inner.level, reasons: inner.reasons.map((reason) => `Inside the archive, ${name}: ${reason}`) });
+		if (name.includes("..") || /^[/\\]|[a-zA-Z]:[/\\]/.test(name)) {
+			risks.push({ level: "blocked", reasons: [`Inside the archive, ${name}: The file path contains directory traversal sequences.`] });
+		}
 		position += 46 + nameLength + extraLength + commentLength;
 	}
 	if (encrypted) risks.push({ level: "warning", reasons: ["This archive is password protected, so its contents could not be checked."] });

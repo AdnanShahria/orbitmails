@@ -20,8 +20,16 @@ export async function GET(request: Request) {
 
 	const requestUrl = new URL(request.url);
 	const remoteUrl = requestUrl.searchParams.get("url") ?? "";
+	const blockedOrigins = [requestUrl.origin];
+	if (env.APP_URL) {
+		try {
+			blockedOrigins.push(new URL(env.APP_URL).origin);
+		} catch {
+			// ignore invalid APP_URL
+		}
+	}
 	try {
-		const image = await fetchRemoteImage(remoteUrl, { blockedOrigins: [requestUrl.origin] });
+		const image = await fetchRemoteImage(remoteUrl, { blockedOrigins });
 		const body = new ArrayBuffer(image.body.byteLength);
 		new Uint8Array(body).set(image.body);
 		return new Response(body, {

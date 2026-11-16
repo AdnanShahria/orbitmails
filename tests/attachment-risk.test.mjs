@@ -53,6 +53,11 @@ test("a ZIP's contents are read from its central directory", () => {
 	assert.match(found.reasons[0], /setup\.exe/);
 	const clean = zip(["a.txt", "b.png"]);
 	assert.equal(risk.inspectZipDirectory(clean.tail, () => clean.directory).level, "ok");
+	const backslashes = zip(["docs\\setup.exe"]);
+	assert.equal(risk.inspectZipDirectory(backslashes.tail, () => backslashes.directory).level, "blocked");
+	const zipSlip = zip(["../../evil.txt"]);
+	assert.equal(risk.inspectZipDirectory(zipSlip.tail, () => zipSlip.directory).level, "blocked");
+	assert.match(risk.inspectZipDirectory(zipSlip.tail, () => zipSlip.directory).reasons[0], /directory traversal/);
 	const locked = zip(["a.txt"], { encrypted: true });
 	assert.equal(risk.inspectZipDirectory(locked.tail, () => locked.directory).level, "warning");
 	assert.equal(risk.inspectZipDirectory(tail, () => null).level, "warning", "unreadable directory is flagged, not trusted");

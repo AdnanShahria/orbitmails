@@ -120,21 +120,98 @@ export function parseListMailboxName(line: string): string | null {
 	return value || null;
 }
 
-export function assertSafeImapHost(host: string): void {
+const FORBIDDEN_PORTS = new Set([
+	20, 21, // FTP
+	22, // SSH
+	23, // Telnet
+	25, // SMTP
+	53, // DNS
+	67, 68, // DHCP
+	69, // TFTP
+	80, // HTTP
+	110, // POP3
+	119, // NNTP
+	123, // NTP
+	135, 137, 138, 139, 445, // NetBIOS / SMB
+	1433, // MSSQL
+	1521, // Oracle
+	2049, // NFS
+	2375, 2376, // Docker
+	3306, // MySQL
+	3389, // RDP
+	5432, // PostgreSQL
+	5984, // CouchDB
+	6379, // Redis
+	8080, 8443, // HTTP Alt
+	9200, 9300, // Elasticsearch
+	11211, // Memcached
+	27017, 27018, // MongoDB
+]);
+
+export function assertSafeImapPort(port: number): void {
+	if (!Number.isInteger(port) || port < 1 || port > 65535) {
+		throw new Error("IMAP port is invalid");
+	}
+	if (port === 993 || port === 143) {
+		return;
+	}
+	if (port < 1024 || FORBIDDEN_PORTS.has(port)) {
+		throw new Error("IMAP port is not allowed");
+	}
+}
+
+const WILDCARD_DNS_SUFFIXES = ["nip.io", "sslip.io", "xip.io", "traefik.me", "localtest.me", "lvh.me", "localhost.run"];
+
+function isForbiddenImapHost(host: string): boolean {
+	if (WILDCARD_DNS_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) return true;
+	for (const match of host.matchAll(/(?<![\d])(\d{1,3})[.-](\d{1,3})[.-](\d{1,3})[.-](\d{1,3})(?![\d])/g)) {
+		if (isPrivateImapIp(`${match[1]}.${match[2]}.${match[3]}.${match[4]}`)) return true;
+	}
+	return host === "localhost"
+		|| host === "local"
+		|| host === "internal"
+		|| host === "intranet"
+		|| host === "lan"
+		|| host === "corp"
+		|| host === "localdomain"
+		|| host.endsWith(".localhost")
+		|| host.endsWith(".local")
+		|| host.endsWith(".internal")
+		|| host.endsWith(".intranet")
+		|| host.endsWith(".lan")
+		|| host.endsWith(".corp")
+		|| host.endsWith(".localdomain")
+		|| host === "home.arpa"
+		|| host.endsWith(".home.arpa")
+		|| host.endsWith(".test");
+}
+
+function isPrivateImapIp(value: string): boolean {
+	const parts = value.split(".").map(Number);
+	if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return false;
+	const [a, b] = parts;
+	return a === 10 || a === 127 || a === 0 || a >= 224 ||
+		(a === 172 && b >= 16 && b <= 31) ||
+		(a === 192 && b === 168) ||
+		(a === 169 && b === 254) ||
+		(a === 100 && b >= 64 && b <= 127);
+}
+
+export function assertSafeImapHost(host: string, port?: number): void {
 	const value = host.trim().toLowerCase();
-	if (!value || value === "localhost" || value.endsWith(".local")) {
+	if (!value) {
 		throw new Error("IMAP host is not allowed");
 	}
-	if (/^\d+\.\d+\.\d+\.\d+$/.test(value)) {
-		const parts = value.split(".").map(Number);
-		if (
-			parts[0] === 10 ||
-			parts[0] === 127 ||
-			(parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-			(parts[0] === 192 && parts[1] === 168) ||
-			(parts[0] === 169 && parts[1] === 254)
-		) {
+	if (value.includes(":") || value.startsWith("[") || /^\d+\.\d+\.\d+\.\d+$/.test(value)) {
+		const cleanIp = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+		if (cleanIp === "::1" || cleanIp === "::" || cleanIp.startsWith("fe80:") || cleanIp.startsWith("fc") || cleanIp.startsWith("fd") || isPrivateImapIp(cleanIp)) {
 			throw new Error("Private IMAP hosts are not allowed");
 		}
+	}
+	if (isForbiddenImapHost(value)) {
+		throw new Error("IMAP host is not allowed");
+	}
+	if (port !== undefined) {
+		assertSafeImapPort(port);
 	}
 }

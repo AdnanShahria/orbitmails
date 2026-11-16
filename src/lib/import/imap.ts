@@ -202,7 +202,7 @@ export type ImapFetchResult = {
 };
 
 export async function fetchImapMessages(input: ImapImportInput): Promise<ImapFetchResult> {
-	assertSafeImapHost(input.host);
+	assertSafeImapHost(input.host, input.port);
 	const connect = await getCloudflareSocketConnect();
 	const socket = connect(
 		{ hostname: input.host, port: input.port },
@@ -241,7 +241,7 @@ export async function fetchImapMessages(input: ImapImportInput): Promise<ImapFet
 }
 
 export async function listImapFolders(input: Omit<ImapImportInput, "folder" | "limit" | "offset">): Promise<string[]> {
-	assertSafeImapHost(input.host);
+	assertSafeImapHost(input.host, input.port);
 	const connect = await getCloudflareSocketConnect();
 	const socket = connect(
 		{ hostname: input.host, port: input.port },

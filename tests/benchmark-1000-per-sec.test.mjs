@@ -167,12 +167,17 @@ test("Benchmark 3 & 4: Process 1,000 emails parallel dispatch & batch log flush 
 		},
 		prepare: (query) => ({
 			bind: (...args) => ({
+				first: async () => null,
+				all: async () => ({ results: [] }),
 				run: async () => {
 					d1BatchInsertCount++;
 					totalRowsInserted += Math.floor(args.length / 10);
 					return { success: true };
 				},
 			}),
+			first: async () => null,
+			all: async () => ({ results: [] }),
+			run: async () => ({ success: true }),
 		}),
 	};
 

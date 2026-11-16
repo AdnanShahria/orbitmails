@@ -18,13 +18,18 @@ const ALLOWED_CONTENT_TYPES = new Set([
 export type RemoteImageFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export class RemoteImageError extends Error {
+	readonly status: number;
+	readonly code: string;
+
 	constructor(
 		message: string,
-		readonly status: number,
-		readonly code: string,
+		status: number,
+		code: string,
 	) {
 		super(message);
 		this.name = "RemoteImageError";
+		this.status = status;
+		this.code = code;
 	}
 }
 
@@ -58,6 +63,18 @@ function embedsNonPublicIpv4(host: string): boolean {
 	for (const match of host.matchAll(/(?<![\d])(\d{1,3})[.-](\d{1,3})[.-](\d{1,3})[.-](\d{1,3})(?![\d])/g)) {
 		if (!isPublicIpv4(`${match[1]}.${match[2]}.${match[3]}.${match[4]}`)) return true;
 	}
+	for (const label of host.split(".")) {
+		if (/^0x[0-9a-f]{1,8}$/i.test(label) || /^[0-9a-f]{8}$/i.test(label) || /^\d{8,10}$/.test(label)) {
+			const num = Number(label.startsWith("0x") || /^[0-9a-f]{8}$/i.test(label) ? parseInt(label, 16) : parseInt(label, 10));
+			if (Number.isInteger(num) && num >= 0 && num <= 0xffffffff) {
+				const a = (num >>> 24) & 0xff;
+				const b = (num >>> 16) & 0xff;
+				const c = (num >>> 8) & 0xff;
+				const d = num & 0xff;
+				if (!isPublicIpv4(`${a}.${b}.${c}.${d}`)) return true;
+			}
+		}
+	}
 	return false;
 }
 
@@ -68,10 +85,18 @@ export function isForbiddenHostname(hostname: string): boolean {
 	return host === "localhost"
 		|| host === "local"
 		|| host === "internal"
+		|| host === "intranet"
+		|| host === "lan"
+		|| host === "corp"
+		|| host === "localdomain"
 		|| host === "test"
 		|| host.endsWith(".localhost")
 		|| host.endsWith(".local")
 		|| host.endsWith(".internal")
+		|| host.endsWith(".intranet")
+		|| host.endsWith(".lan")
+		|| host.endsWith(".corp")
+		|| host.endsWith(".localdomain")
 		|| host === "home.arpa"
 		|| host.endsWith(".home.arpa")
 		|| host.endsWith(".test");
@@ -172,14 +197,99 @@ async function readLimitedBody(response: Response, maxBytes: number): Promise<Ui
 	return body;
 }
 
+function parseIpv6Words(ip: string): number[] | null {
+	let str = ip.trim().toLowerCase();
+	if (!str.includes(":")) return null;
+	if (str.startsWith("[") && str.endsWith("]")) str = str.slice(1, -1);
+	const doubleColonCount = (str.match(/::/g) || []).length;
+	if (doubleColonCount > 1) return null;
+	let parts: number[];
+	if (doubleColonCount === 1) {
+		const [left, right] = str.split("::");
+		const leftParts = left ? left.split(":") : [];
+		const rightParts = right ? right.split(":") : [];
+		let ipv4Parts: number[] | null = null;
+		if (rightParts.length > 0 && rightParts[rightParts.length - 1].includes(".")) {
+			const v4 = rightParts.pop()!.split(".").map(Number);
+			if (v4.length !== 4 || v4.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+			ipv4Parts = [(v4[0] << 8) | v4[1], (v4[2] << 8) | v4[3]];
+		}
+		const needed = 8 - leftParts.length - rightParts.length - (ipv4Parts ? 2 : 0);
+		if (needed < 0) return null;
+		const middle = new Array(needed).fill(0);
+		const leftNums = leftParts.map((p) => parseInt(p, 16));
+		const rightNums = rightParts.map((p) => parseInt(p, 16));
+		if (leftNums.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff) || rightNums.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+		parts = [...leftNums, ...middle, ...rightNums, ...(ipv4Parts || [])];
+	} else {
+		const rawParts = str.split(":");
+		let ipv4Parts: number[] | null = null;
+		if (rawParts.length > 0 && rawParts[rawParts.length - 1].includes(".")) {
+			const v4 = rawParts.pop()!.split(".").map(Number);
+			if (v4.length !== 4 || v4.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+			ipv4Parts = [(v4[0] << 8) | v4[1], (v4[2] << 8) | v4[3]];
+		}
+		const nums = rawParts.map((p) => parseInt(p, 16));
+		if (nums.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+		parts = [...nums, ...(ipv4Parts || [])];
+	}
+	if (parts.length !== 8) return null;
+	return parts;
+}
+
 export function isPublicAddress(address: string): boolean {
 	const value = address.trim().toLowerCase();
-	if (!value.includes(":")) return isPublicIpv4(value);
-	const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(value);
-	if (mapped) return isPublicIpv4(mapped[1]);
-	if (value === "::" || value === "::1") return false;
-	// Unique local (fc00::/7), link-local (fe80::/10) and multicast (ff00::/8).
-	return !/^(f[cd]|fe[89ab]|ff)/.test(value);
+	if (!value.includes(":")) {
+		if (!isPublicIpv4(value)) return false;
+		const parts = value.split(".").map(Number);
+		const [a, b, c] = parts;
+		// Documentation test ranges: 192.0.2.0/24 (TEST-NET-1), 198.51.100.0/24 (TEST-NET-2), 203.0.113.0/24 (TEST-NET-3)
+		if (a === 192 && b === 0 && (c === 0 || c === 2)) return false;
+		if (a === 198 && b === 51 && c === 100) return false;
+		if (a === 203 && b === 0 && c === 113) return false;
+		return true;
+	}
+	const parts = parseIpv6Words(value);
+	if (!parts) return false;
+	// Unspecified ::
+	if (parts.every((p) => p === 0)) return false;
+	// Loopback ::1 or 0:0:0:0:0:0:0:1
+	if (parts.slice(0, 7).every((p) => p === 0) && parts[7] === 1) return false;
+	// Unique local fc00::/7 (fc00 - fdff)
+	if ((parts[0] & 0xfe00) === 0xfc00) return false;
+	// Link-local fe80::/10
+	if ((parts[0] & 0xffc0) === 0xfe80) return false;
+	// Site-local (deprecated) fec0::/10
+	if ((parts[0] & 0xffc0) === 0xfec0) return false;
+	// Multicast ff00::/8
+	if ((parts[0] & 0xff00) === 0xff00) return false;
+	// Documentation 2001:db8::/32
+	if (parts[0] === 0x2001 && parts[1] === 0x0db8) return false;
+	// ORCHID / ORCHIDv2 (2001:10::/28, 2001:20::/28)
+	if (parts[0] === 0x2001 && ((parts[1] & 0xfff0) === 0x0010 || (parts[1] & 0xfff0) === 0x0020)) return false;
+	// Discard prefix 100::/64
+	if (parts[0] === 0x0100 && parts[1] === 0 && parts[2] === 0 && parts[3] === 0) return false;
+	// 6to4 prefix 2002::/16 embedding IPv4 in words 1 and 2
+	if (parts[0] === 0x2002) {
+		const v4 = `${parts[1] >> 8}.${parts[1] & 0xff}.${parts[2] >> 8}.${parts[2] & 0xff}`;
+		return isPublicIpv4(v4);
+	}
+	// NAT64 well-known prefix 64:ff9b::/96
+	if (parts[0] === 0x0064 && parts[1] === 0xff9b && parts.slice(2, 6).every((p) => p === 0)) {
+		const v4 = `${parts[6] >> 8}.${parts[6] & 0xff}.${parts[7] >> 8}.${parts[7] & 0xff}`;
+		return isPublicIpv4(v4);
+	}
+	// IPv4-mapped ::ffff:x.x.x.x
+	if (parts.slice(0, 5).every((p) => p === 0) && parts[5] === 0xffff) {
+		const v4 = `${parts[6] >> 8}.${parts[6] & 0xff}.${parts[7] >> 8}.${parts[7] & 0xff}`;
+		return isPublicIpv4(v4);
+	}
+	// IPv4-compatible (deprecated) ::x.x.x.x
+	if (parts.slice(0, 6).every((p) => p === 0)) {
+		const v4 = `${parts[6] >> 8}.${parts[6] & 0xff}.${parts[7] >> 8}.${parts[7] & 0xff}`;
+		return isPublicIpv4(v4);
+	}
+	return true;
 }
 
 async function defaultResolveHost(hostname: string): Promise<string[]> {

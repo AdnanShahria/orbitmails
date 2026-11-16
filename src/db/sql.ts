@@ -31,7 +31,13 @@ export function charIndex(haystack: AnyColumn | SQL, needle: string): SQL {
 
 /** String concatenation; `||` is logical OR on MySQL. String arguments are SQL literals, so pass constants only. */
 export function concatText(...parts: Array<SQL | string>): SQL {
-	const list = parts.map((part) => (typeof part === "string" ? sql.raw(`'${part.replace(/'/g, "''")}'`) : part));
+	const list = parts.map((part) => {
+		if (typeof part !== "string") return part;
+		const escaped = dialect === "mysql"
+			? part.replace(/\\/g, "\\\\").replace(/'/g, "''")
+			: part.replace(/'/g, "''");
+		return sql.raw(`'${escaped}'`);
+	});
 	return dialect === "mysql" ? sql`concat(${sql.join(list, sql`, `)})` : sql.join(list, sql` || `);
 }
 

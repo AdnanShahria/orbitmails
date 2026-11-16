@@ -19,6 +19,12 @@ function isEmlFile(filename: string, type: string): boolean {
 	return name.endsWith(".eml") || type === "message/rfc822";
 }
 
+export function sanitizeImportFilename(name: string): string {
+	const basename = name.split(/[/\\]/).pop()?.trim() || "message.eml";
+	// eslint-disable-next-line no-control-regex
+	return basename.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 255) || "message.eml";
+}
+
 function stringToArrayBuffer(value: string): ArrayBuffer {
 	const bytes = new TextEncoder().encode(value);
 	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -63,17 +69,18 @@ export async function parseImportForm(request: Request): Promise<{
 	const messages: ImportMessageInput[] = [];
 
 	for (const file of files) {
-		if (isMboxFile(file.name, file.type)) {
+		const safeName = sanitizeImportFilename(file.name);
+		if (isMboxFile(safeName, file.type)) {
 			const content = await file.text();
 			for (const [index, raw] of splitMboxMessages(content).entries()) {
-				const filename = `${file.name}#${index + 1}`;
+				const filename = `${safeName}#${index + 1}`;
 				messages.push({ filename, raw: stringToArrayBuffer(raw), ...getMessageFlags(flags, filename) });
 			}
 			continue;
 		}
 
-		if (isEmlFile(file.name, file.type) || file.type === "") {
-			messages.push({ filename: file.name, raw: await file.arrayBuffer(), ...getMessageFlags(flags, file.name) });
+		if (isEmlFile(safeName, file.type) || file.type === "") {
+			messages.push({ filename: safeName, raw: await file.arrayBuffer(), ...getMessageFlags(flags, safeName) });
 		}
 	}
 
@@ -81,7 +88,7 @@ export async function parseImportForm(request: Request): Promise<{
 		mailboxId,
 		destination,
 		destinationValue,
-		filenames: files.map((file) => file.name),
+		filenames: files.map((file) => sanitizeImportFilename(file.name)),
 		background,
 		messages: messages.slice(0, background ? MAX_BACKGROUND_IMPORT_MESSAGES : MAX_INLINE_IMPORT_MESSAGES),
 	};

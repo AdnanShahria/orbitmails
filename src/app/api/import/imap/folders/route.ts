@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/cookies";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { getEnv } from "@/lib/cloudflare";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { readJsonBody } from "@/lib/http/request";
@@ -8,6 +9,7 @@ import type { ImapFolderListRequest } from "./types";
 import { parseImapFolderListRequest } from "./utils";
 
 export async function POST(request: Request) {
+	if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 	const env = getEnv();
 	await requireUser(env, request);
 	let input: ReturnType<typeof parseImapFolderListRequest>;

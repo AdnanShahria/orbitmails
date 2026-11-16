@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/cloudflare";
 import { requireSessionUser } from "@/lib/api/auth";
 import { isPrimaryAdmin } from "@/lib/auth/admin";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 
 async function authorize(request: Request) {
 	const env = getEnv();
@@ -12,12 +13,9 @@ async function authorize(request: Request) {
 		auth = { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), user: null };
 	}
 	if (auth.error) {
-		if (process.env.NODE_ENV === "development") {
-			return { env, user: { id: "dev-admin", role: "admin" }, error: null };
-		}
 		return { env, user: null, error: auth.error };
 	}
-	if (!isPrimaryAdmin(auth.user) && auth.user?.role !== "admin") {
+	if (!isPrimaryAdmin(auth.user)) {
 		return { env, user: null, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
 	}
 	return { env, user: auth.user, error: null };
@@ -71,6 +69,10 @@ export async function GET(request: Request) {
 		const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") || "25", 10)));
 		const offset = (page - 1) * limit;
 		const search = url.searchParams.get("search")?.trim() || "";
+
+		if (EXCLUDED_TABLE_PREFIXES.some((prefix) => table.startsWith(prefix))) {
+			return NextResponse.json({ error: `Access to system table '${table}' is not permitted` }, { status: 403 });
+		}
 
 		// Ensure table exists in sqlite_master
 		const existsCheck = await db.prepare(
@@ -152,6 +154,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
 	const access = await authorize(request);
 	if (access.error) return access.error;
+	if (!hasValidSessionMutationOrigin(request)) {
+		return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+	}
 
 	const db = access.env.DB;
 	if (!db) {

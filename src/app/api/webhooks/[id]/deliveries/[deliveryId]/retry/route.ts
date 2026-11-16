@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { runDelivery } from "@/lib/email/webhooks";
 import { loadOwnedWebhook } from "../../../utils";
 import type { WebhookDeliveryRouteParams } from "../../../types";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 
 export async function POST(request: Request, { params }: WebhookDeliveryRouteParams) {
+	if (!hasValidSessionMutationOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 	const { id, deliveryId } = await params;
 	const loaded = await loadOwnedWebhook(request, id);
 	if (loaded.error) return loaded.error;

@@ -59,16 +59,18 @@ export async function GET(request: Request) {
       window.opener.postMessage({
         type: "CLOUDFLARE_AUTH_SUCCESS",
         domains: ${JSON.stringify(domains)}
-      }, "*");
+      }, window.location.origin);
     }
     setTimeout(() => { window.close(); }, 2000);
   </script>
   ` : ""}
 </body>
 </html>`;
-		return new NextResponse(html, {
+		const res = new NextResponse(html, {
 			headers: { "Content-Type": "text/html; charset=utf-8" },
 		});
+		res.cookies.delete("cf_oauth_state");
+		return res;
 	};
 
 	if (error) {
@@ -79,7 +81,7 @@ export async function GET(request: Request) {
 		return renderResult("Authorization Failed", "No authorization code returned from Cloudflare.", false);
 	}
 
-	if (storedState && state && storedState !== state) {
+	if (!storedState || !state || storedState !== state) {
 		return renderResult("Security Verification Failed", "Invalid state parameter. Please try again.", false);
 	}
 

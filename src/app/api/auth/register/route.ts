@@ -18,6 +18,7 @@ import { ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
 import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
+import { allowLoginAttempt } from "@/lib/auth/rate-limit";
 import { verifyTurnstileToken } from "@/lib/auth/turnstile";
 import { getDomainProvisioningError } from "@/lib/domains/errors";
 import { ensureBookingUsername } from "@/lib/booking/username";
@@ -59,6 +60,13 @@ export async function POST(request: Request) {
 	} catch (error) {
 		const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
 		return NextResponse.json({ error: "Invalid registration request" }, { status });
+	}
+
+	if (!(await allowLoginAttempt(env, request))) {
+		return NextResponse.json(
+			{ error: "Too many attempts. Try again shortly." },
+			{ status: 429, headers: { "Retry-After": "60" } },
+		);
 	}
 
 	const bodyRecord = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;

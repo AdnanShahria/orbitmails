@@ -221,7 +221,7 @@ async function readResponseSnippet(res: Response): Promise<string> {
 	}
 }
 
-async function signPayload(secret: string, body: string): Promise<string> {
+export async function signPayload(secret: string, body: string): Promise<string> {
 	const key = await crypto.subtle.importKey(
 		"raw",
 		new TextEncoder().encode(secret),
@@ -233,4 +233,15 @@ async function signPayload(secret: string, body: string): Promise<string> {
 	return Array.from(new Uint8Array(sig))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
+}
+
+export async function verifyWebhookSignature(secret: string, body: string, signature: string): Promise<boolean> {
+	if (!secret || !signature) return false;
+	const expected = await signPayload(secret, body);
+	if (expected.length !== signature.length) return false;
+	let diff = 0;
+	for (let i = 0; i < expected.length; i += 1) {
+		diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+	}
+	return diff === 0;
 }

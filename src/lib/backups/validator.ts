@@ -81,12 +81,13 @@ export function validateBackupContent(backupJson: string): BackupValidationResul
 			const sampleRow = rows[0];
 			if (typeof sampleRow !== "object" || sampleRow === null) continue;
 
+			const safeTable = table.replace(/"/g, '""');
 			const cols = Object.keys(sampleRow);
-			const colDefs = cols.map((col) => `"${col}" TEXT`).join(", ");
-			memDb.exec(`CREATE TABLE IF NOT EXISTS "${table}" (${colDefs})`);
+			const colDefs = cols.map((col) => `"${col.replace(/"/g, '""')}" TEXT`).join(", ");
+			memDb.exec(`CREATE TABLE IF NOT EXISTS "${safeTable}" (${colDefs})`);
 
 			const placeholders = cols.map(() => "?").join(", ");
-			const insertStmt = memDb.prepare(`INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`);
+			const insertStmt = memDb.prepare(`INSERT INTO "${safeTable}" (${cols.map((c) => `"${c.replace(/"/g, '""')}"`).join(", ")}) VALUES (${placeholders})`);
 
 			// Insert sample batch
 			const testBatch = rows.slice(0, 10);

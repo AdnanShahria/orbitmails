@@ -1,5 +1,6 @@
 import { parseImportDestination } from "@/lib/import/destination";
 import type { ImportDestination } from "@/lib/import/destination-types";
+import { assertSafeImapPort } from "@/lib/import/imap-utils";
 import type { ImapImportSpec } from "@/lib/import/jobs-types";
 import type { ImapImportRequest } from "./types";
 
@@ -23,7 +24,7 @@ export function parseImapImportRequest(input: ImapImportRequest): {
 
 	if (!input.mailboxId) throw new Error("Mailbox is required");
 	if (!host) throw new Error("IMAP host is required");
-	if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("IMAP port is invalid");
+	assertSafeImapPort(port);
 	if (!username || !password) throw new Error("IMAP username and password are required");
 	if (sources.length === 0) throw new Error("Select at least one folder to import");
 

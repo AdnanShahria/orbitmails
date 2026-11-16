@@ -26,6 +26,43 @@ export function isZipSupported(): boolean {
 	return typeof DecompressionStream !== "undefined";
 }
 
+/**
+ * Sanitizes a ZIP entry path to prevent ZipSlip (directory traversal).
+ * - Strips null bytes and ASCII control characters.
+ * - Normalizes Windows backslashes to forward slashes.
+ * - Removes Windows drive prefixes (e.g. "C:").
+ * - Resolves "." and ".." segments, ensuring path traversal cannot escape the root directory.
+ * Returns null if the path is invalid or attempts to escape the root directory.
+ */
+export function sanitizeZipEntryPath(rawName: string): string | null {
+	// Strip null bytes and control characters
+	// eslint-disable-next-line no-control-regex
+	const cleaned = rawName.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
+	if (!cleaned) return null;
+
+	// Normalize backslashes to forward slashes and strip drive letter if present
+	const normalized = cleaned.replace(/\\/g, "/").replace(/^[a-zA-Z]:[/\\]*/, "");
+
+	const isDirectory = normalized.endsWith("/");
+	const segments = normalized.split("/");
+	const safeSegments: string[] = [];
+
+	for (const segment of segments) {
+		const trimmed = segment.trim();
+		if (!trimmed || trimmed === ".") continue;
+		if (trimmed === "..") {
+			// If stack is empty, this attempts to escape root
+			if (safeSegments.length === 0) return null;
+			safeSegments.pop();
+		} else {
+			safeSegments.push(trimmed);
+		}
+	}
+
+	if (safeSegments.length === 0) return null;
+	return safeSegments.join("/") + (isDirectory ? "/" : "");
+}
+
 export async function listZipEntries(blob: Blob): Promise<ZipEntry[]> {
 	const tailStart = Math.max(0, blob.size - MAX_EOCD_SEARCH);
 	const tail = await readView(blob, tailStart, blob.size);
@@ -67,7 +104,8 @@ export async function listZipEntries(blob: Blob): Promise<ZipEntry[]> {
 		const commentLength = directory.getUint16(offset + 32, true);
 		let localHeaderOffset = directory.getUint32(offset + 42, true);
 		const nameStart = directory.byteOffset + offset + 46;
-		const name = decoder.decode(new Uint8Array(directory.buffer, nameStart, nameLength));
+		const rawName = decoder.decode(new Uint8Array(directory.buffer, nameStart, nameLength));
+		const name = sanitizeZipEntryPath(rawName);
 
 		let extra = offset + 46 + nameLength;
 		const extraEnd = extra + extraLength;
@@ -83,7 +121,9 @@ export async function listZipEntries(blob: Blob): Promise<ZipEntry[]> {
 			extra += 4 + length;
 		}
 
-		entries.push({ name, method, compressedSize, size, localHeaderOffset, encrypted: (flags & 1) === 1 });
+		if (name) {
+			entries.push({ name, method, compressedSize, size, localHeaderOffset, encrypted: (flags & 1) === 1 });
+		}
 		offset += 46 + nameLength + extraLength + commentLength;
 	}
 	return entries;
@@ -93,9 +133,11 @@ export async function listZipEntries(blob: Blob): Promise<ZipEntry[]> {
 export async function openZipEntry(blob: Blob, entry: ZipEntry): Promise<ReadableStream<Uint8Array>> {
 	if (entry.encrypted) throw new Error(`${entry.name} is encrypted`);
 	if (entry.method !== 0 && entry.method !== 8) throw new Error(`${entry.name} uses an unsupported compression method`);
+	if (entry.localHeaderOffset < 0 || entry.localHeaderOffset + 30 > blob.size) throw new Error("Corrupt zip entry");
 	const header = await readView(blob, entry.localHeaderOffset, entry.localHeaderOffset + 30);
 	if (header.getUint32(0, true) !== LOCAL_SIGNATURE) throw new Error("Corrupt zip entry");
 	const start = entry.localHeaderOffset + 30 + header.getUint16(26, true) + header.getUint16(28, true);
+	if (start < 0 || start + entry.compressedSize > blob.size) throw new Error("Corrupt zip entry data");
 	const data = blob.slice(start, start + entry.compressedSize).stream() as ReadableStream<Uint8Array>;
 	return entry.method === 0 ? data : data.pipeThrough(new DecompressionStream("deflate-raw") as unknown as TransformStream<Uint8Array, Uint8Array>);
 }

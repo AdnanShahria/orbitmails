@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { TurnstileField } from "@/components/auth/turnstile";
 import { submitLogin, submitMfaCode } from "./utils";
+import { safeRedirectUrl } from "@/lib/security/redirect";
 
 export function LoginClient({ adding = false }: { adding?: boolean }) {
   const { t } = useLanguage();
@@ -23,7 +24,7 @@ export function LoginClient({ adding = false }: { adding?: boolean }) {
   const [code, setCode] = useState("");
 
   function finish(redirect?: string) {
-    router.replace(redirect ?? "/inbox");
+    router.replace(safeRedirectUrl(redirect, "/inbox"));
     router.refresh();
   }
 

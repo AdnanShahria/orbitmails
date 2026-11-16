@@ -8,7 +8,8 @@ import { isForbiddenHostname, isIpLiteral, isPublicAddress } from "@/lib/remote-
 export function isPublicHttpsUrl(value: string): boolean {
 	try {
 		const url = new URL(value);
-		return url.protocol === "https:" && !url.username && !url.password && !!url.hostname && !isIpLiteral(url.hostname) && !isForbiddenHostname(url.hostname);
+		const hasValidPort = !url.port || url.port === "443";
+		return url.protocol === "https:" && !url.username && !url.password && hasValidPort && !!url.hostname && !isIpLiteral(url.hostname) && !isForbiddenHostname(url.hostname);
 	} catch {
 		return false;
 	}

@@ -45,7 +45,9 @@ export async function queryDns(name: string, type: DnsQueryType): Promise<string
 		if (json.Status !== 0 && json.Status !== 3) {
 			throw new Error(`DNS query for ${name} ${type} returned status ${json.Status}`);
 		}
-		return (json.Answer ?? []).map((answer) =>
+		const targetType = type === "A" ? 1 : type === "AAAA" ? 28 : type === "MX" ? 15 : type === "TXT" ? 16 : type === "CNAME" ? 5 : 0;
+		const answers = targetType ? (json.Answer ?? []).filter((a) => !a.type || a.type === targetType) : (json.Answer ?? []);
+		return answers.map((answer) =>
 			type === "TXT" ? decodeTxt(answer.data) : answer.data,
 		);
 	} finally {

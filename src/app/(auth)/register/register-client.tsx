@@ -19,6 +19,7 @@ import {
   submitPrimaryDomain,
   submitRegistration,
 } from "./utils";
+import { safeRedirectUrl } from "@/lib/security/redirect";
 import type { DomainPreflight, DomainSetupResult, SetupRequirementCheck } from "./types";
 
 export function RegisterClient() {
@@ -208,7 +209,7 @@ export function RegisterClient() {
       setTurnstileReset((value) => value + 1);
       return;
     }
-    window.location.assign(data.redirect ?? "/login");
+    window.location.assign(safeRedirectUrl(data.redirect, "/login"));
   }
 
   const showDomainStep = hasPrimaryDomain === false && step === 2;

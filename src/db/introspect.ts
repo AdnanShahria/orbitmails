@@ -23,7 +23,7 @@ export async function listTableNames(db: D1Database): Promise<Set<string>> {
 export async function listColumnNames(db: D1Database, table: string): Promise<Set<string>> {
 	const dialect = dialectOf(db);
 	if (dialect === "sqlite") {
-		const result = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+		const result = await db.prepare(`PRAGMA table_info(${quoteIdentifier("sqlite", table)})`).all<{ name: string }>();
 		return new Set(result.results.map((column) => column.name));
 	}
 	const schema = dialect === "postgres" ? "current_schema()" : "database()";

@@ -8,7 +8,7 @@
 import type { QueuedEmailJob, ParallelDispatchSummary } from "./types";
 import { DEFAULT_HIGH_THROUGHPUT_CONFIG } from "./types";
 import { buildCandidateProviders } from "@/lib/mailhub/router";
-import { sendWithFailover } from "@/lib/mailhub/failover";
+import { resolveCandidateCredentials, sendWithFailover } from "@/lib/mailhub/failover";
 import { flushBatchToD1 } from "@/lib/mailhub/logging";
 import type { SendLogEntry } from "@/lib/mailhub/types";
 import { acquireQuotaPermit } from "./token-lease-pool";
@@ -54,12 +54,36 @@ export async function processParallelQueueBatch(
 	let failoversTriggered = 0;
 	const sendLogs: SendLogEntry[] = [];
 
+	// Memoize candidate providers per project for the batch to avoid redundant DB roundtrips
+	const projectCandidatesMap = new Map<string, Promise<any>>();
+	const getCandidatesForProject = (projectId: string) => {
+		let p = projectCandidatesMap.get(projectId);
+		if (!p) {
+			p = (async () => {
+				const list = await buildCandidateProviders(projectId, dateBucket, env);
+				for (const cand of list) {
+					if (!cand.credential?.apiKey && !cand.credential?.sendMailToken && !cand.credential?.accessKeyId) {
+						try {
+							const resolved = await resolveCandidateCredentials(cand, env);
+							cand.credential = { ...cand.credential, ...resolved };
+						} catch {
+							// Ignore resolution failures at pre-fetch
+						}
+					}
+				}
+				return list;
+			})();
+			projectCandidatesMap.set(projectId, p);
+		}
+		return p;
+	};
+
 	// Process jobs in parallel with controlled concurrency
 	await mapConcurrent(jobs, config.workerConcurrency, async (job) => {
 		const jobStart = Date.now();
 		try {
 			// 1. Resolve ranked candidate providers for this project
-			const candidates = await buildCandidateProviders(job.projectId, dateBucket, env);
+			const candidates = await getCandidatesForProject(job.projectId);
 			if (candidates.length === 0) {
 				throw new Error(`No eligible providers available for project ${job.projectSlug}`);
 			}

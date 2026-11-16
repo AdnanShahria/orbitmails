@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { assertPrimaryAdmin } from "@/lib/auth/admin";
 import { requireUser } from "@/lib/auth/cookies";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import type { LicenseKeyRequest } from "./types";
 
 const licenseKeySchema = z.object({
@@ -12,6 +13,9 @@ const licenseKeySchema = z.object({
 export async function requireLicenseAdmin(env: CloudflareEnv, request: Request): Promise<NextResponse | null> {
 	try {
 		assertPrimaryAdmin(await requireUser(env, request));
+		if (request.method !== "GET" && !hasValidSessionMutationOrigin(request)) {
+			return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+		}
 		return null;
 	} catch {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });

@@ -17,7 +17,7 @@ export const DRIVE_MAX_DEPTH = 64;
 export function normalizeDriveName(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const name = value.replace(/[\u0000-\u001f/\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, DRIVE_MAX_NAME_LENGTH);
-	return name && name !== "." && name !== ".." ? name : null;
+	return name && !/^\.+$/.test(name) ? name : null;
 }
 
 export function canEditDrive(role: DriveRole | null): boolean {
@@ -42,6 +42,10 @@ export function formatDriveSize(bytes: number): string {
 }
 
 export function driveContentDisposition(filename: string, inline: boolean): string {
-	const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-	return `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+	// Drop control and bidi characters to prevent header injection and spoofing.
+	// eslint-disable-next-line no-control-regex
+	const cleaned = filename.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim().slice(0, DRIVE_MAX_NAME_LENGTH) || "file";
+	const ascii = cleaned.replace(/[^\x20-\x7e]/g, "_").replace(/["\\%]/g, "_");
+	const encoded = encodeURIComponent(cleaned).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+	return `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }

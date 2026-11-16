@@ -14,6 +14,7 @@ import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { recordAuthActivity } from "@/lib/auth/activity";
 import { createLoginChallenge } from "@/lib/auth/login-challenge";
+import { safeRedirectUrl } from "@/lib/security/redirect";
 
 export async function POST(request: Request) {
 	const env = getEnv();
@@ -58,10 +59,19 @@ export async function POST(request: Request) {
 
 	const token = await createSession(env, user.id);
 	await recordAuthActivity(env, { action: "auth.login", userId: user.id, request });
+	const bodyRecord = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+	const requestedRedirect = typeof bodyRecord.returnTo === "string"
+		? bodyRecord.returnTo
+		: typeof bodyRecord.redirect === "string"
+			? bodyRecord.redirect
+			: typeof bodyRecord.next === "string"
+				? bodyRecord.next
+				: "/inbox";
+	const redirect = safeRedirectUrl(requestedRedirect, "/inbox");
 	const response = NextResponse.json({
 		ok: true,
 		token,
-		redirect: "/inbox",
+		redirect,
 	});
 	response.headers.set("Cache-Control", "no-store");
 	response.cookies.set(SESSION_COOKIE, token, {

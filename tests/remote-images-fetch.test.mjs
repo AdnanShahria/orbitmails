@@ -244,7 +244,19 @@ test("invalid query targets are rejected before fetch", () => {
 });
 
 test("a public name that resolves to a private address is refused, including after a redirect", async () => {
-	for (const addresses of [["127.0.0.1"], ["10.0.0.5"], ["93.184.216.34", "169.254.169.254"], ["::1"], ["fd00::1"], ["::ffff:192.168.1.1"], []]) {
+	for (const addresses of [
+		["127.0.0.1"],
+		["10.0.0.5"],
+		["93.184.216.34", "169.254.169.254"],
+		["::1"],
+		["0:0:0:0:0:0:0:1"],
+		["fd00::1"],
+		["fe80::1"],
+		["::ffff:192.168.1.1"],
+		["64:ff9b::127.0.0.1"],
+		["2002:7f00:0001::"],
+		[],
+	]) {
 		await assert.rejects(fetchRemoteImage("https://images.example/a.png", { resolveHost: async () => addresses, fetch: async () => new Response(png, { headers: { "content-type": "image/png" } }) }), (error) => error instanceof RemoteImageError);
 	}
 	const seen = [];

@@ -35,10 +35,15 @@ export function isPublicIpv4(value: string): boolean {
 	const parts = value.split(".").map(Number);
 	if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
 	const [a, b] = parts;
+	// 0.0.0.0/8 (current network), 10.0.0.0/8 (private), 127.0.0.0/8 (loopback), 224.0.0.0/4 (multicast/reserved)
 	if (a === 10 || a === 127 || a === 0 || a >= 224) return false;
+	// 172.16.0.0/12 (private)
 	if (a === 172 && b >= 16 && b <= 31) return false;
+	// 192.168.0.0/16 (private)
 	if (a === 192 && b === 168) return false;
+	// 169.254.0.0/16 (link-local, cloud metadata)
 	if (a === 169 && b === 254) return false;
+	// 100.64.0.0/10 (carrier-grade NAT)
 	if (a === 100 && b >= 64 && b <= 127) return false;
 	return true;
 }

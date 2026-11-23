@@ -121,7 +121,7 @@ export async function dispatchAlertEmail(
 	}
 
 	// Resolve sender identity (always deliver from canonical platform sender)
-	const fromAddress = "MailHub Alerts <contact@orbitsaas.cloud>";
+	const fromAddress = "MailHub Alerts <contact@mail.orbitsaas.cloud>";
 
 	const emailMessage = {
 		from: fromAddress,
@@ -137,7 +137,7 @@ export async function dispatchAlertEmail(
 	};
 
 	try {
-		let messageId = `<mailhub-${crypto.randomUUID()}@orbitsaas.cloud>`;
+		let messageId = `<mailhub-${crypto.randomUUID()}@mail.orbitsaas.cloud>`;
 
 		// 1. Cloudflare Workers SendEmail binding if present
 		if (env.EMAIL && typeof (env.EMAIL as any).send === "function") {

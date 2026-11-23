@@ -312,7 +312,7 @@ export async function sendSingleNormalizedMessage(
 			effectiveCandidates = candidates.filter((c) => !c.dailySlice || c.dailySlice <= 0);
 		}
 
-		// 4c. Execute delivery via sendWithFailover using canonical platform sender contact@orbitsaas.cloud
+		// 4c. Execute delivery via sendWithFailover using canonical platform sender contact@mail.orbitsaas.cloud
 		const canonicalSender = resolveCanonicalOutboundSender(payload.from, headers);
 
 		const outboundMessage: OutboundProviderMessage = {

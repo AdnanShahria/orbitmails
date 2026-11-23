@@ -1,11 +1,12 @@
 import { formatEmailAddress, getEmailAddress, parseEmailAddressParts } from "@/lib/email/address";
 
-export const CANONICAL_OUTBOUND_SENDER = "contact@orbitsaas.cloud";
+export const CANONICAL_OUTBOUND_SENDER = "contact@mail.orbitsaas.cloud";
 
 /**
- * Rewrites any outbound sender to the canonical verified platform address
- * (contact@orbitsaas.cloud) while keeping any display name and preserving a
- * routable original sender in Reply-To when not already specified.
+ * Normalizes any outbound sender for Cloudflare Email Sending (`mail.orbitsaas.cloud`).
+ * Addresses already on the canonical domain (e.g. `noreply@mail.orbitsaas.cloud`) are
+ * preserved; all other addresses are rewritten to `contact@mail.orbitsaas.cloud` while
+ * keeping any display name and preserving a routable original sender in Reply-To.
  */
 export function resolveCanonicalOutboundSender(
 	from: string,
@@ -17,6 +18,16 @@ export function resolveCanonicalOutboundSender(
 	const displayName = parts.name?.replace(/["\r\n]/g, "").trim() || null;
 	const originalAddress = (parts.address || getEmailAddress(raw)).trim().toLowerCase();
 	const headers: Record<string, string> = { ...(existingHeaders ?? {}) };
+	const canonicalDomain = extractDomain(canonicalAddress);
+	const originalDomain = extractDomain(originalAddress);
+
+	if (originalAddress && canonicalDomain && originalDomain === canonicalDomain) {
+		return {
+			from: formatEmailAddress(originalAddress, displayName),
+			originalAddress,
+			headers,
+		};
+	}
 
 	if (
 		originalAddress &&
@@ -52,7 +63,7 @@ export function extractDomain(emailOrHostname: string): string {
 }
 
 export function mintMessageId(from: string): string {
-	const domain = extractDomain(from) || "orbitsaas.cloud";
+	const domain = extractDomain(from) || "mail.orbitsaas.cloud";
 	const id = typeof crypto !== "undefined" && crypto.randomUUID
 		? crypto.randomUUID()
 		: `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;

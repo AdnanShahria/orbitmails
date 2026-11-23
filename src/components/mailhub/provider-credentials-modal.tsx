@@ -134,7 +134,7 @@ export function ProviderCredentialsModal({
 						<div className="rounded-xl border border-blue-200/80 bg-blue-50/70 p-3 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
 							<p className="font-semibold">Cloudflare Worker Email Binding</p>
 							<p className="mt-1 text-[11px] leading-relaxed opacity-90">
-								Cloudflare Email Routing uses the Worker <code className="font-mono">EMAIL</code> binding automatically. Recipients always receive mail from <code className="font-mono">contact@orbitsaas.cloud</code>.
+								Cloudflare Email Routing uses the Worker <code className="font-mono">EMAIL</code> binding automatically. Recipients always receive mail from <code className="font-mono">contact@mail.orbitsaas.cloud</code>.
 							</p>
 						</div>
 					) : (

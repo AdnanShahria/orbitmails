@@ -444,15 +444,32 @@ export async function resolveProjectAllocations(
 		console.warn("[MailHub Router] Failed to resolve allocations from state:", stateErr);
 	}
 
-	// 4. Fallback: If no allocations found in DB or state, check environment bindings
+	// 4. Fallback: If no allocations found in DB or state, check environment bindings (Cloudflare first)
 	const fallbackList: Array<ProjectAllocation & { credential: ProviderCredential }> = [];
+
+	if (env.EMAIL || (env.CF_ACCOUNT_ID && env.CF_TOKEN)) {
+		fallbackList.push({
+			projectId,
+			providerCredId: "cred_cloudflare_main",
+			dailySlice: 10000,
+			priority: 1,
+			credential: {
+				id: "cred_cloudflare_main",
+				provider: "cloudflare",
+				label: "Cloudflare Native Email",
+				dailyLimit: 10000,
+				costPerK: 0,
+				enabled: true,
+			},
+		});
+	}
 
 	if (env.BREVO_API_KEY) {
 		fallbackList.push({
 			projectId,
 			providerCredId: "cred_brevo_default",
 			dailySlice: 300,
-			priority: 1,
+			priority: 2,
 			credential: {
 				id: "cred_brevo_default",
 				provider: "brevo",
@@ -469,7 +486,7 @@ export async function resolveProjectAllocations(
 			projectId,
 			providerCredId: "cred_resend_default",
 			dailySlice: 100,
-			priority: 2,
+			priority: 3,
 			credential: {
 				id: "cred_resend_default",
 				provider: "resend",
@@ -486,29 +503,12 @@ export async function resolveProjectAllocations(
 			projectId,
 			providerCredId: "cred_sendpulse_default",
 			dailySlice: 500,
-			priority: 3,
+			priority: 4,
 			credential: {
 				id: "cred_sendpulse_default",
 				provider: "sendpulse",
 				label: "SendPulse (Env)",
 				dailyLimit: 500,
-				costPerK: 0,
-				enabled: true,
-			},
-		});
-	}
-
-	if (env.EMAIL) {
-		fallbackList.push({
-			projectId,
-			providerCredId: "cred_cloudflare_main",
-			dailySlice: 10000,
-			priority: 3,
-			credential: {
-				id: "cred_cloudflare_main",
-				provider: "cloudflare",
-				label: "Cloudflare Native Email",
-				dailyLimit: 10000,
 				costPerK: 0,
 				enabled: true,
 			},

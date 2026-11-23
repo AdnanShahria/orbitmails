@@ -49,12 +49,33 @@ export async function getResendApiKey(env: CloudflareEnv): Promise<string> {
 
 /** The provider for the domain a message is sent from. */
 export async function getOutboundProviderConfig(env: CloudflareEnv, fromAddress: string): Promise<OutboundProviderConfig> {
-	const envAny = env as unknown as Record<string, string | undefined>;
-	const brevoApiKey = envAny.BREVO_API_KEY?.trim() || (typeof process !== "undefined" ? process.env?.BREVO_API_KEY?.trim() : undefined);
-	const zeptoApiKey = envAny.ZEPTOMAIL_API_KEY?.trim() || envAny.ZEPTO_API_KEY?.trim() || (typeof process !== "undefined" ? (process.env?.ZEPTOMAIL_API_KEY?.trim() || process.env?.ZEPTO_API_KEY?.trim()) : undefined);
-	const zeptoBounceAddress = envAny.ZEPTOMAIL_BOUNCE_ADDRESS?.trim() || (typeof process !== "undefined" ? process.env?.ZEPTOMAIL_BOUNCE_ADDRESS?.trim() : undefined);
+	const envAny = env as unknown as Record<string, any>;
+	const procEnv: Record<string, string | undefined> =
+		typeof process !== "undefined" && process.env ? process.env : {};
+	const hasCloudflareSender = Boolean(
+		(envAny.EMAIL && typeof envAny.EMAIL.send === "function") ||
+			((envAny.CF_ACCOUNT_ID || procEnv.CF_ACCOUNT_ID) && (envAny.CF_TOKEN || procEnv.CF_TOKEN)),
+	);
 
-	// If Brevo or ZeptoMail is configured in environment/secrets, route via Brevo with ZeptoMail fallback
+	const hostname = getEmailAddress(fromAddress).split("@")[1]?.toLowerCase();
+	const [domain] = hostname
+		? await getDb(env).select({ provider: domains.sendingProvider }).from(domains).where(eq(domains.hostname, hostname)).limit(1)
+		: [];
+
+	if (domain?.provider === "cloudflare") {
+		return { provider: "cloudflare" };
+	}
+	if (domain?.provider === "resend") return { provider: "resend", apiKey: await getResendApiKey(env) };
+	if (domain?.provider === "ses") return { provider: "ses", config: await requireAwsConfig(env) };
+
+	if (hasCloudflareSender) {
+		return { provider: "cloudflare" };
+	}
+
+	const brevoApiKey = envAny.BREVO_API_KEY?.trim() || procEnv.BREVO_API_KEY?.trim();
+	const zeptoApiKey = envAny.ZEPTOMAIL_API_KEY?.trim() || envAny.ZEPTO_API_KEY?.trim() || procEnv.ZEPTOMAIL_API_KEY?.trim() || procEnv.ZEPTO_API_KEY?.trim();
+	const zeptoBounceAddress = envAny.ZEPTOMAIL_BOUNCE_ADDRESS?.trim() || procEnv.ZEPTOMAIL_BOUNCE_ADDRESS?.trim();
+
 	if (brevoApiKey || zeptoApiKey) {
 		return {
 			provider: "brevo_zepto",
@@ -64,20 +85,11 @@ export async function getOutboundProviderConfig(env: CloudflareEnv, fromAddress:
 		};
 	}
 
-	const hostname = getEmailAddress(fromAddress).split("@")[1]?.toLowerCase();
-	const [domain] = hostname
-		? await getDb(env).select({ provider: domains.sendingProvider }).from(domains).where(eq(domains.hostname, hostname)).limit(1)
-		: [];
-	if (!domain || domain.provider === "none") {
-		const fallbacks = await resolveConfiguredMailHubFallbacks(env);
-		if (fallbacks.length > 0) {
-			return { provider: "cloudflare" };
-		}
-		throw new Error(`Sending is not set up for ${hostname ?? "this domain"}. Choose a sending provider on the Domains page or configure BREVO_API_KEY / ZEPTOMAIL_API_KEY.`);
+	const fallbacks = await resolveConfiguredMailHubFallbacks(env);
+	if (fallbacks.length > 0) {
+		return { provider: "cloudflare" };
 	}
-	if (domain.provider === "resend") return { provider: "resend", apiKey: await getResendApiKey(env) };
-	if (domain.provider === "ses") return { provider: "ses", config: await requireAwsConfig(env) };
-	return { provider: "cloudflare" };
+	throw new Error(`Sending is not set up for ${hostname ?? "this domain"}. Choose a sending provider on the Domains page or configure Cloudflare Email Service.`);
 }
 
 type FallbackCandidate = {

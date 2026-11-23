@@ -107,7 +107,7 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 				? emailBinding.send(payload)
 				: sendViaCloudflareRestApi(cfAccountId, cfToken, payload, msgId, options?.timeoutMs);
 
-		// Always rewrite outbound sender to canonical contact@orbitsaas.cloud (preserving display name & Reply-To)
+		// Normalize outbound sender to canonical verified mail.orbitsaas.cloud domain (preserving display name & Reply-To)
 		const rawFrom = typeof message.from === "string" ? message.from : (message.from as any)?.address || "";
 		const canonical = resolveCanonicalOutboundSender(rawFrom, message.headers, CANONICAL_OUTBOUND_SENDER);
 		const normalizedHeaders = Object.keys(canonical.headers).length ? canonical.headers : undefined;
@@ -195,7 +195,7 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 			if (!isRateLimit && env?.DB) {
 				try {
 					const row = await env.DB.prepare(
-						"SELECT hostname FROM domains WHERE length(zone_id) = 32 AND status = 'active' LIMIT 1",
+						"SELECT hostname FROM domains WHERE length(zone_id) = 32 AND status = 'active' AND sending_enabled = 1 ORDER BY CASE WHEN hostname = 'mail.orbitsaas.cloud' THEN 0 ELSE 1 END LIMIT 1",
 					).first();
 					const verifiedHostname = row?.hostname ? String(row.hostname).trim().toLowerCase() : "";
 

@@ -244,7 +244,7 @@ export async function GET(request: Request) {
 				const toAddress = String(row.to_address || row.toAddress || row.recipient || "user@example.com");
 				const subject = String(row.subject || "(No Subject)");
 				const fromAddress =
-					diag?.fromAddress || row.from_address || row.fromAddress || "contact@orbitsaas.cloud";
+					diag?.fromAddress || row.from_address || row.fromAddress || "contact@mail.orbitsaas.cloud";
 				const messageId =
 					row.provider_message_id ||
 					row.providerMessageId ||

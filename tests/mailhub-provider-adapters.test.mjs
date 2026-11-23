@@ -218,17 +218,23 @@ test("SesAdapter error classification", () => {
 	assert.equal(rejectParsed.suggestedAction, "REJECT_NO_FAILOVER");
 });
 
-test("resolveCanonicalOutboundSender and CloudflareEmailAdapter rewrite any sender to contact@orbitsaas.cloud", async () => {
+test("resolveCanonicalOutboundSender and CloudflareEmailAdapter normalize senders to mail.orbitsaas.cloud", async () => {
 	const customSender = mailhub.resolveCanonicalOutboundSender(
 		"Fashion Doniya <notifications@fashion-doniya.com>",
 	);
-	assert.equal(customSender.from, '"Fashion Doniya" <contact@orbitsaas.cloud>');
+	assert.equal(customSender.from, '"Fashion Doniya" <contact@mail.orbitsaas.cloud>');
 	assert.equal(customSender.headers["Reply-To"], "notifications@fashion-doniya.com");
+
+	const subdomainSender = mailhub.resolveCanonicalOutboundSender(
+		"Alerts <alerts@mail.orbitsaas.cloud>",
+	);
+	assert.equal(subdomainSender.from, '"Alerts" <alerts@mail.orbitsaas.cloud>');
+	assert.equal(subdomainSender.headers["Reply-To"], undefined);
 
 	const internalSender = mailhub.resolveCanonicalOutboundSender(
 		"notifications@fashion-doniya.internal",
 	);
-	assert.equal(internalSender.from, "contact@orbitsaas.cloud");
+	assert.equal(internalSender.from, "contact@mail.orbitsaas.cloud");
 	assert.equal(internalSender.headers["Reply-To"], undefined);
 
 	const sentPayloads = [];
@@ -246,7 +252,7 @@ test("resolveCanonicalOutboundSender and CloudflareEmailAdapter rewrite any send
 			EMAIL: {
 				send: async (payload) => {
 					sentPayloads.push(payload);
-					return { messageId: "<cf-test@orbitsaas.cloud>" };
+					return { messageId: "<cf-test@mail.orbitsaas.cloud>" };
 				},
 			},
 		},
@@ -254,7 +260,7 @@ test("resolveCanonicalOutboundSender and CloudflareEmailAdapter rewrite any send
 
 	assert.equal(result.success, true);
 	assert.equal(sentPayloads.length, 1);
-	assert.equal(sentPayloads[0].from, '"Fashion Doniya" <contact@orbitsaas.cloud>');
+	assert.equal(sentPayloads[0].from, '"Fashion Doniya" <contact@mail.orbitsaas.cloud>');
 	assert.equal(sentPayloads[0].headers?.["Reply-To"], "alerts@fashiondoniya.com");
 });
 

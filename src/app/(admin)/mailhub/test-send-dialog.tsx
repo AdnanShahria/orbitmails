@@ -227,12 +227,12 @@ export function TestSendDialog({
               <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
                 Reply-To / App Sender (Optional)
               </label>
-              <span className="text-[10px] text-neutral-400">Recipients always receive from contact@orbitsaas.cloud</span>
+              <span className="text-[10px] text-neutral-400">Recipients always receive from contact@mail.orbitsaas.cloud</span>
             </div>
             <input
               type="email"
               value={senderAddress}
-              placeholder="contact@orbitsaas.cloud (or custom Reply-To address)"
+              placeholder="contact@mail.orbitsaas.cloud (or custom Reply-To address)"
               onChange={(e) => setSenderAddress(e.target.value)}
               className="mt-1.5 min-h-11 w-full rounded-xl border border-neutral-200 bg-white px-3.5 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100"
             />

@@ -5,7 +5,8 @@
 	"compatibility_date": "2026-05-20",
 	"keep_vars": true,
 	"vars": {
-		"CF_EMAIL_WORKER_NAME": "orbitmails"
+		"CF_EMAIL_WORKER_NAME": "orbitmails",
+		"CF_ACCOUNT_ID": "14666fcfc8a4015d8ff3565860e33002"
 	},
 	"compatibility_flags": [
 		"nodejs_compat",

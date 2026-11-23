@@ -70,7 +70,7 @@ test("buildDeliveryDiagnostics preserves real multi-provider errors and generate
 		deliveryId: "dlv_test_1",
 		attempts,
 		stage: "failover_exhausted",
-		fromAddress: "contact@orbitsaas.cloud",
+		fromAddress: "contact@mail.orbitsaas.cloud",
 	});
 
 	assert.equal(diag.errorCode, "QUOTA_EXCEEDED");

@@ -523,7 +523,7 @@ export function ActivityFeed({
                     <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 border-t border-neutral-100 pt-3.5 dark:border-neutral-800">
                       {/* Sender (From) with Badge & 1-Click Copy */}
                       {(() => {
-                        const fromVal = activeItem.fromAddress || "contact@orbitsaas.cloud";
+                        const fromVal = activeItem.fromAddress || "contact@mail.orbitsaas.cloud";
                         return (
                           <div className="flex items-center justify-between rounded-2xl border border-neutral-200/80 bg-neutral-50/90 px-3.5 py-2.5 dark:border-neutral-750 dark:bg-neutral-800/70">
                             <div className="min-w-0 pr-2">

@@ -7,7 +7,8 @@ import type {
 	ProviderSendOptions,
 	ProviderSendResult,
 } from "./types";
-import { CANONICAL_OUTBOUND_SENDER, fetchWithTimeout, mintMessageId, resolveCanonicalOutboundSender, toBase64 } from "./utils";
+import { getEmailAddress } from "@/lib/email/address";
+import { CANONICAL_OUTBOUND_SENDER, extractDomain, fetchWithTimeout, mintMessageId, resolveCanonicalOutboundSender, toBase64 } from "./utils";
 
 async function sendViaCloudflareRestApi(
 	accountId: string,
@@ -92,7 +93,19 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 		const processEnv: Record<string, string | undefined> =
 			typeof process !== "undefined" && process.env ? process.env : {};
 		const cfAccountId = (credentials?.accountId || env?.CF_ACCOUNT_ID || processEnv.CF_ACCOUNT_ID || "").trim();
-		const cfToken = (credentials?.token || credentials?.apiKey || env?.CF_TOKEN || processEnv.CF_TOKEN || "").trim();
+		let cfToken = (credentials?.token || credentials?.apiKey || env?.CF_TOKEN || processEnv.CF_TOKEN || "").trim();
+		if (!cfToken && env?.DB) {
+			try {
+				const settingsRow = await env.DB.prepare(
+					"SELECT cf_token FROM app_settings WHERE id = 'default' LIMIT 1",
+				).first();
+				if (settingsRow?.cf_token) {
+					cfToken = String(settingsRow.cf_token).trim();
+				}
+			} catch {
+				// Best-effort lookup; app_settings may not exist in unit tests
+			}
+		}
 
 		if (!emailBinding && !(cfAccountId && cfToken)) {
 			throw new ProviderError({
@@ -107,9 +120,25 @@ export class CloudflareEmailAdapter implements ProviderAdapter<CloudflareCredent
 				? emailBinding.send(payload)
 				: sendViaCloudflareRestApi(cfAccountId, cfToken, payload, msgId, options?.timeoutMs);
 
-		// Normalize outbound sender to canonical verified mail.orbitsaas.cloud domain (preserving display name & Reply-To)
+		// Keep the sender's own domain when it is already an active Cloudflare sending domain;
+		// otherwise normalize to the canonical verified mail.orbitsaas.cloud address (preserving display name & Reply-To).
 		const rawFrom = typeof message.from === "string" ? message.from : (message.from as any)?.address || "";
-		const canonical = resolveCanonicalOutboundSender(rawFrom, message.headers, CANONICAL_OUTBOUND_SENDER);
+		const senderAddress = getEmailAddress(rawFrom).trim().toLowerCase();
+		const senderDomain = senderAddress ? extractDomain(senderAddress) : "";
+		let canonicalTarget = CANONICAL_OUTBOUND_SENDER;
+		if (senderDomain && env?.DB) {
+			try {
+				const ownDomainRow = await env.DB.prepare(
+					"SELECT hostname FROM domains WHERE hostname = ? AND length(zone_id) = 32 AND status = 'active' AND sending_enabled = 1 LIMIT 1",
+				).bind(senderDomain).first();
+				if (ownDomainRow?.hostname) {
+					canonicalTarget = senderAddress;
+				}
+			} catch {
+				// Fall back to canonical outbound sender
+			}
+		}
+		const canonical = resolveCanonicalOutboundSender(rawFrom, message.headers, canonicalTarget);
 		const normalizedHeaders = Object.keys(canonical.headers).length ? canonical.headers : undefined;
 
 		const startTime = performance.now();

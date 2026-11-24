@@ -452,3 +452,58 @@ test("CloudflareEmailAdapter falls back to CF REST API on unverified destination
 		globalThis.fetch = originalFetch;
 	}
 });
+
+test("CloudflareEmailAdapter reads app_settings.cf_token and preserves active Cloudflare sending domain", async () => {
+	const adapter = new mailhub.CloudflareEmailAdapter();
+	const originalFetch = globalThis.fetch;
+	const fetchCalls = [];
+	globalThis.fetch = async (url, init) => {
+		fetchCalls.push({ url: String(url), init, body: JSON.parse(init.body) });
+		return new Response(JSON.stringify({ success: true }), { status: 200 });
+	};
+
+	const mockDb = {
+		prepare(sql) {
+			return {
+				bind() {
+					return this;
+				},
+				async first() {
+					if (sql.includes("app_settings")) return { cf_token: "cf_db_tok_123" };
+					if (sql.includes("FROM domains")) return { hostname: "orbitsaas.cloud" };
+					return null;
+				},
+			};
+		},
+	};
+
+	try {
+		const res = await adapter.send(
+			{},
+			{
+				from: "Orbit <contact@orbitsaas.cloud>",
+				to: ["user@gmail.com"],
+				subject: "DB token + verified domain",
+				text: "Sent via Cloudflare",
+			},
+			undefined,
+			{
+				EMAIL: {
+					send: async () => {
+						throw new Error("destination address is not a verified address");
+					},
+				},
+				CF_ACCOUNT_ID: "acct_db_123",
+				DB: mockDb,
+			},
+		);
+
+		assert.equal(res.success, true);
+		assert.equal(res.provider, "cloudflare");
+		assert.equal(fetchCalls.length, 1);
+		assert.equal(fetchCalls[0].init.headers.Authorization, "Bearer cf_db_tok_123");
+		assert.equal(fetchCalls[0].body.from, '"Orbit" <contact@orbitsaas.cloud>');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+});

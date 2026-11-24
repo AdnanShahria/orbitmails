@@ -11,6 +11,9 @@ export async function GET(request: Request) {
 	if (!user) {
 		return new NextResponse("Unauthorized. Please log in to Orbitmails first.", { status: 401 });
 	}
+	if (!user.canManageDomains && !user.isPrimaryAdmin) {
+		return new NextResponse("Forbidden", { status: 403 });
+	}
 
 	const db = getDb(env);
 	const [settings] = await db
@@ -199,7 +202,7 @@ export async function GET(request: Request) {
           window.opener.postMessage({
             type: 'CLOUDFLARE_AUTH_SUCCESS',
             domains: [...(data.result?.added || []), ...(data.result?.updated || [])]
-          }, '*');
+          }, window.location.origin);
         }
         setTimeout(() => window.close(), 1800);
       } catch (err) {

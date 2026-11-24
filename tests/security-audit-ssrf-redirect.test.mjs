@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const outDir = mkdtempSync(join(tmpdir(), "orbitflare-security-audit-"));
+const outDir = mkdtempSync(join(root, "tests", ".tmp-security-audit-"));
 after(() => rmSync(outDir, { recursive: true, force: true }));
 
 await build({
@@ -18,6 +18,8 @@ export { assertSafeImapHost, assertSafeImapPort } from "./src/lib/import/imap-ut
 export { isSafeRedirectPath, safeRedirectUrl } from "./src/lib/security/redirect.ts";
 export { signPayload, verifyWebhookSignature } from "./src/lib/email/webhooks.ts";
 export { isPublicHttpsUrl } from "./src/lib/security/public-url.ts";
+export { resolveAgentBaseUrl } from "./src/lib/agent/provider.ts";
+export { getValidatedOrigin } from "./src/lib/security/cors.ts";
 `,
 		resolveDir: root,
 		sourcefile: "security-entry.ts",
@@ -27,8 +29,13 @@ export { isPublicHttpsUrl } from "./src/lib/security/public-url.ts";
 	platform: "node",
 	format: "esm",
 	target: "node22",
+	packages: "external",
 	logLevel: "silent",
-	alias: { "@": join(root, "src") },
+	alias: {
+		"@": join(root, "src"),
+		"next/server": "next/server.js",
+		"cloudflare:workers": join(root, "server/runtime/cloudflare-workers.ts"),
+	},
 });
 
 const {
@@ -41,6 +48,8 @@ const {
 	signPayload,
 	verifyWebhookSignature,
 	isPublicHttpsUrl,
+	resolveAgentBaseUrl,
+	getValidatedOrigin,
 } = await import(pathToFileURL(join(outDir, "security.mjs")).href);
 
 test("isPublicAddress blocks all IPv4 and IPv6 private, reserved, loopback, and metadata ranges", () => {
@@ -162,4 +171,26 @@ test("verifyWebhookSignature correctly verifies and rejects tampered signatures"
 	assert.equal(await verifyWebhookSignature(secret, body, "invalid_signature"), false);
 	assert.equal(await verifyWebhookSignature("wrong_secret", body, signature), false);
 	assert.equal(await verifyWebhookSignature(secret, body + "tampered", signature), false);
+});
+
+test("resolveAgentBaseUrl blocks private, loopback, metadata, and non-443 SSRF URLs", () => {
+	assert.equal(resolveAgentBaseUrl("custom", "https://api.example.com/v1/"), "https://api.example.com/v1");
+	assert.throws(() => resolveAgentBaseUrl("custom", "https://127.0.0.1/v1"), /public HTTPS/);
+	assert.throws(() => resolveAgentBaseUrl("custom", "https://169.254.169.254/latest"), /public HTTPS/);
+	assert.throws(() => resolveAgentBaseUrl("custom", "https://localhost/v1"), /public HTTPS/);
+	assert.throws(() => resolveAgentBaseUrl("custom", "https://service.internal/v1"), /public HTTPS/);
+	assert.throws(() => resolveAgentBaseUrl("custom", "https://api.example.com:8443/v1"), /public HTTPS/);
+	assert.throws(() => resolveAgentBaseUrl("custom", "http://api.example.com/v1"), /public HTTPS/);
+});
+
+test("getValidatedOrigin rejects non-HTTPS remote origins and subdomain suffix spoofing", () => {
+	const req = (origin) => new Request("https://app.example.com", { headers: { origin } });
+	assert.equal(getValidatedOrigin(req("http://evil.com")), null);
+	assert.equal(getValidatedOrigin(req("javascript:alert(1)")), null);
+	assert.equal(getValidatedOrigin(req("https://evil.com")), "https://evil.com");
+	assert.equal(getValidatedOrigin(req("http://localhost:3000")), "http://localhost:3000");
+
+	assert.equal(getValidatedOrigin(req("https://app.example.com"), ["*.example.com"]), "https://app.example.com");
+	assert.equal(getValidatedOrigin(req("https://evil-example.com"), ["*.example.com"]), null);
+	assert.equal(getValidatedOrigin(req("http://app.example.com"), ["*.example.com"]), null);
 });

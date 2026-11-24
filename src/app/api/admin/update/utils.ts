@@ -51,7 +51,7 @@ function getDispatchConfig(env: CloudflareEnv): UpdateDispatchConfig {
     throw new Error("GITHUB_UPDATE_TOKEN must be configured");
   }
 
-  if (!repository) {
+  if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
     throw new Error(
       "GITHUB_UPDATE_REPO must be configured as owner/repository",
     );
@@ -91,8 +91,6 @@ async function githubRequest<T>(
       ...init?.headers,
     },
   });
-
-  console.log(`[gg]`, `${GITHUB_API_URL}${path}`);
 
   if (response.statusText === "Forbidden") {
     return {

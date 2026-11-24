@@ -6,6 +6,7 @@ import { getEnv } from "@/lib/cloudflare";
 import { getDb } from "@/db";
 import { appSettings } from "@/db/schema";
 import { syncCloudflareDomains } from "@/lib/domains/cloudflare-sync";
+import { escapeHtml } from "@/lib/security/sanitizer";
 import type { CfAuth } from "@/lib/cloudflare-api.types";
 
 export async function GET(request: Request) {
@@ -21,11 +22,14 @@ export async function GET(request: Request) {
 	const storedState = cookieStore.get("cf_oauth_state")?.value;
 
 	const renderResult = (title: string, message: string, success: boolean, domains: string[] = []) => {
+		const safeTitle = escapeHtml(title);
+		const safeMessage = escapeHtml(message);
+		const safeDomains = domains.map((d) => escapeHtml(d));
 		const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>${title}</title>
+  <title>${safeTitle}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f9fafb; color: #111827; }
@@ -43,12 +47,12 @@ export async function GET(request: Request) {
 <body>
   <div class="card">
     <div class="icon">${success ? "🎉" : "⚠️"}</div>
-    <h1>${title}</h1>
-    <p>${message}</p>
-    ${domains.length > 0 ? `
+    <h1>${safeTitle}</h1>
+    <p>${safeMessage}</p>
+    ${safeDomains.length > 0 ? `
       <div class="list">
         <strong>Imported Domains:</strong>
-        ${domains.map((d) => `<div class="list-item">✓ ${d}</div>`).join("")}
+        ${safeDomains.map((d) => `<div class="list-item">✓ ${d}</div>`).join("")}
       </div>
     ` : ""}
     <button class="btn ${success ? "btn-primary" : "btn-secondary"}" onclick="window.close()">Close window</button>
@@ -72,6 +76,10 @@ export async function GET(request: Request) {
 		res.cookies.delete("cf_oauth_state");
 		return res;
 	};
+
+	if (!user || (!user.canManageDomains && !user.isPrimaryAdmin)) {
+		return renderResult("Authorization Required", "Please sign in as an administrator with domain permissions before connecting Cloudflare.", false);
+	}
 
 	if (error) {
 		return renderResult("Authorization Cancelled", errorDescription || error, false);

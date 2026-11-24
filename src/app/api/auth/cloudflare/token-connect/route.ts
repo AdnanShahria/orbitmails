@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { requireUser } from "@/lib/auth/cookies";
+import { requireSessionUser } from "@/lib/api/auth";
+import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 import { getEnv } from "@/lib/cloudflare";
 import { getDb } from "@/db";
 import { appSettings } from "@/db/schema";
@@ -9,9 +9,14 @@ import type { CfAuth } from "@/lib/cloudflare-api.types";
 
 export async function POST(request: Request) {
 	const env = getEnv();
-	const user = await requireUser(env, request);
+	const authSession = await requireSessionUser(env, request);
+	if (authSession.error) return authSession.error;
+	const user = authSession.user;
 	if (!user.canManageDomains && !user.isPrimaryAdmin) {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+	}
+	if (!hasValidSessionMutationOrigin(request)) {
+		return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
 	}
 
 	const body = (await request.json().catch(() => ({}))) as { token?: string };

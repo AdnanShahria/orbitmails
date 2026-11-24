@@ -29,25 +29,29 @@ export function getValidatedOrigin(request: Request, allowedOrigins?: string[]):
 	if (!origin) return null;
 
 	if (!allowedOrigins || allowedOrigins.length === 0 || allowedOrigins.includes("*")) {
-		// When no origin whitelist is specified, verify that the scheme is https/http
+		// When no explicit whitelist is specified, allow only HTTPS or local loopback origins
 		try {
 			const parsed = new URL(origin);
 			if (parsed.protocol === "https:" || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
 				return origin;
 			}
+			return null;
 		} catch {
 			return null;
 		}
-		return origin;
 	}
 
 	const isAllowed = allowedOrigins.some((allowed) => {
 		if (allowed === origin) return true;
 		if (allowed.startsWith("*.")) {
-			const domain = allowed.slice(2);
+			const domain = allowed.slice(2).toLowerCase();
 			try {
-				const originHost = new URL(origin).hostname;
-				return originHost.endsWith(domain);
+				const parsed = new URL(origin);
+				if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+					return false;
+				}
+				const originHost = parsed.hostname.toLowerCase();
+				return originHost === domain || originHost.endsWith(`.${domain}`);
 			} catch {
 				return false;
 			}

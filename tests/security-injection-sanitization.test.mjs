@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { build } from "esbuild";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -125,4 +125,12 @@ test("concatText produces parameterized query without raw string injection", () 
 	const result = concatText("prefix", "suffix");
 	// Should produce query with query chunks
 	assert.ok(result);
+});
+
+test("admin database explorer GET route quotes all dynamic SQLite identifiers", () => {
+	const source = readFileSync(join(root, "src/app/api/admin/database/route.ts"), "utf8");
+	assert.ok(source.includes("quoteIdentifier("), "Expected quoteIdentifier usage in admin/database/route.ts");
+	assert.doesNotMatch(source, /PRAGMA table_info\("\$\{/, "Unescaped table interpolation in PRAGMA");
+	assert.doesNotMatch(source, /FROM "\$\{/, "Unescaped table interpolation in FROM");
+	assert.doesNotMatch(source, /ORDER BY "\$\{/, "Unescaped pkCol interpolation in ORDER BY");
 });

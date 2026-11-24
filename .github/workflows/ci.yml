@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Lint, Test & Validate Migrations
@@ -13,10 +16,12 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: "npm"
@@ -24,17 +29,50 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: TypeScript Static Typecheck
-        run: npx tsc --noEmit
-
-      - name: Verify Multi-Dialect Migration Bundle
+      - name: Generate & Verify Multi-Dialect Migration Bundle
         run: |
           npm run db:bundle
           git diff --exit-code || (echo "Migration bundle out of sync. Run 'npm run db:bundle' locally." && exit 1)
+
+      - name: TypeScript Static Typecheck
+        run: npx tsc --noEmit
 
       - name: Run Test Suite
         run: node --test tests/*.test.mjs
 
       - name: Disaster Recovery Backup Validation Test
         run: node scripts/validate-backup-dr.mjs
+
+  security:
+    name: Security & AppSec Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run AppSec & CI/CD Security Test Suite
+        run: node --test tests/security-*.test.mjs tests/inbound-hardening.test.mjs tests/mcp-host-validation.test.mjs tests/intake-signature.test.mjs tests/sns-signature.test.mjs tests/router-auth.test.mjs tests/attachment-risk.test.mjs
+
+      - name: Scan Workflows & Tracked Files for Secret Patterns
+        run: |
+          if git grep -nE -- '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA|EC|OPENSSH|PGP) PRIVATE KEY-----|xkeysib-[A-Za-z0-9-]{20,}|re_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{36})' -- ':!tests/*' ':!*.md'; then
+            echo "Potential hardcoded secret detected in tracked files!"
+            exit 1
+          fi
+
+      - name: Dependency Vulnerability Audit (Advisory)
+        run: npm audit --omit=dev --audit-level=high || true
+
 

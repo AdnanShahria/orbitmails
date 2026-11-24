@@ -5,11 +5,14 @@ import type { AgentProviderConfig, AgentProviderPreset, AgentProviderPublicConfi
 import { AGENT_SETTINGS_ID, DEFAULT_CLOUDFLARE_MODEL, PROVIDER_BASE_URLS } from "./provider-constants";
 import { parseAgentModelIds } from "./model-ids";
 import { parseAgentModelRates } from "./pricing";
+import { isPublicHttpsUrl } from "@/lib/security/public-url";
 
 export function resolveAgentBaseUrl(preset: AgentProviderPreset, customUrl: string) {
 	if (preset !== "custom") return PROVIDER_BASE_URLS[preset];
 	const url = new URL(customUrl.trim());
-	if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Custom provider URL must be an HTTPS base URL without credentials or query parameters");
+	if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || !isPublicHttpsUrl(url.toString())) {
+		throw new Error("Custom provider URL must be a public HTTPS base URL without credentials or query parameters");
+	}
 	return url.toString().replace(/\/$/, "");
 }
 

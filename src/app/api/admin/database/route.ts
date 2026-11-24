@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { quoteIdentifier } from "@/db/introspect";
 import { getEnv } from "@/lib/cloudflare";
 import { requireSessionUser } from "@/lib/api/auth";
 import { isPrimaryAdmin } from "@/lib/auth/admin";
@@ -55,7 +56,7 @@ export async function GET(request: Request) {
 				const chunk = tableNames.slice(i, i + CHUNK_SIZE);
 				try {
 					const results = await db.batch(
-						chunk.map((name) => db.prepare(`SELECT count(*) as count FROM "${name.replace(/"/g, '""')}"`)),
+						chunk.map((name) => db.prepare(`SELECT count(*) as count FROM ${quoteIdentifier("sqlite", name)}`)),
 					);
 					chunk.forEach((name, idx) => {
 						const row = results[idx]?.results?.[0] as { count?: number | string } | undefined;
@@ -65,7 +66,7 @@ export async function GET(request: Request) {
 					for (const name of chunk) {
 						try {
 							const row = await db
-								.prepare(`SELECT count(*) as count FROM "${name.replace(/"/g, '""')}"`)
+								.prepare(`SELECT count(*) as count FROM ${quoteIdentifier("sqlite", name)}`)
 								.first<{ count?: number | string }>();
 							counts.set(name, Number(row?.count ?? 0));
 						} catch {
@@ -110,8 +111,9 @@ export async function GET(request: Request) {
 		}
 
 		try {
+			const quotedTable = quoteIdentifier("sqlite", table);
 			// Fetch column information
-			const columnsQuery = await db.prepare(`PRAGMA table_info("${table}")`).all();
+			const columnsQuery = await db.prepare(`PRAGMA table_info(${quotedTable})`).all();
 			const columns = (columnsQuery.results as Array<{
 				cid: number;
 				name: string;
@@ -122,8 +124,8 @@ export async function GET(request: Request) {
 			}>) || [];
 
 			// Row count
-			let countQuery = `SELECT count(*) as count FROM "${table}"`;
-			let dataQuery = `SELECT * FROM "${table}"`;
+			let countQuery = `SELECT count(*) as count FROM ${quotedTable}`;
+			let dataQuery = `SELECT * FROM ${quotedTable}`;
 			const bindParams: any[] = [];
 
 			// If search query is provided and text columns exist
@@ -132,7 +134,9 @@ export async function GET(request: Request) {
 					/text|varchar|char|string/i.test(c.type) || !c.type
 				);
 				if (searchableCols.length > 0) {
-					const whereClauses = searchableCols.map((c) => `"${c.name}" LIKE ?`).join(" OR ");
+					const whereClauses = searchableCols
+						.map((c) => `${quoteIdentifier("sqlite", c.name)} LIKE ?`)
+						.join(" OR ");
 					countQuery += ` WHERE ${whereClauses}`;
 					dataQuery += ` WHERE ${whereClauses}`;
 					for (let i = 0; i < searchableCols.length; i++) {
@@ -144,7 +148,7 @@ export async function GET(request: Request) {
 			// Add ordering and pagination
 			const pkCol = columns.find((c) => c.pk === 1)?.name || columns[0]?.name;
 			if (pkCol) {
-				dataQuery += ` ORDER BY "${pkCol}" DESC`;
+				dataQuery += ` ORDER BY ${quoteIdentifier("sqlite", pkCol)} DESC`;
 			}
 			dataQuery += ` LIMIT ? OFFSET ?`;
 

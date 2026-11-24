@@ -135,10 +135,10 @@ export async function POST(request: Request) {
 			email,
 			passwordHash: hashPassword(password),
 			name,
-			role: "admin",
+			role: "user",
 			isPrimaryAdmin: false,
-			canManageDomains: true,
-			canManageMailboxes: true,
+			canManageDomains: false,
+			canManageMailboxes: false,
 		});
 
 		// Auto-provision personal mailbox if domain is registered on the platform

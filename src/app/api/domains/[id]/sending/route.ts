@@ -59,6 +59,14 @@ export async function PUT(request: Request, { params }: Params) {
 			if (error instanceof MxConflictError) return NextResponse.json({ error: error.message, code: error.code, records: error.records }, { status: 409 });
 			warning = error instanceof Error ? error.message : "Could not enable Cloudflare sending";
 		}
+	} else if (provider === "resend") {
+		const status = await getResendDomainStatus(env, domain);
+		if (status === "verified") {
+			await getDb(env)
+				.update(domains)
+				.set({ sendingEnabled: true, ...(domain.status === "pending" ? { status: "active" as const } : {}) })
+				.where(eq(domains.id, domain.id));
+		}
 	}
 	const updated = await getDomainForUser(env, user.id, id);
 	return NextResponse.json({ domain: updated, warning }, { headers: { "Cache-Control": "no-store" } });

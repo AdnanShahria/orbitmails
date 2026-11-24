@@ -6,6 +6,8 @@ import { getEnv } from "@/lib/cloudflare";
 import { requireUser } from "@/lib/auth/cookies";
 import { canManageDomains } from "@/lib/auth/admin";
 import { getDomainForUser, removeDomainForUser } from "@/lib/domains/service";
+import { isManualZone } from "@/lib/domains/provision";
+import { queryDns } from "@/lib/dns-query";
 import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
 
 type Params = { params: Promise<{ id: string }> };
@@ -32,8 +34,20 @@ export async function PATCH(request: Request, { params }: Params) {
 	}
 	const domain = await getDomainForUser(env, user.id, id);
 	if (!domain) return NextResponse.json({ error: "Not found" }, { status: 404 });
-	await getDb(env).update(domains).set({ dnsSkipped: body.dnsSkipped }).where(eq(domains.id, id));
-	return NextResponse.json({ domain: { ...domain, dnsSkipped: body.dnsSkipped } });
+	const updates: Partial<typeof domains.$inferInsert> = { dnsSkipped: body.dnsSkipped };
+	if (body.dnsSkipped === false) {
+		if (domain.status === "pending") updates.status = "active";
+		if (domain.receivingProvider === "cloudflare" && isManualZone(domain.zoneId) && !domain.routingEnabled) {
+			try {
+				const mxRecords = await queryDns(domain.hostname, "MX");
+				if (mxRecords.some((v) => /\.mx\.cloudflare\.net\.?$/i.test(v.trim()))) {
+					updates.routingEnabled = true;
+				}
+			} catch {}
+		}
+	}
+	await getDb(env).update(domains).set(updates).where(eq(domains.id, id));
+	return NextResponse.json({ domain: { ...domain, ...updates } });
 }
 
 export async function DELETE(request: Request, { params }: Params) {

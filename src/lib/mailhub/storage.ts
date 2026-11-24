@@ -303,15 +303,15 @@ export const CLEAN_PRODUCTION_MAILHUB_STATE: MailHubState = {
 		},
 	],
 	allocations: [
-		{ projectId: "proj_fashion-doniya", providerId: "cred_cloudflare_main", dailySlice: 10000, priority: 1, usedToday: 0 },
-		{ projectId: "proj_fashion-doniya", providerId: "cred_brevo_main", dailySlice: 300, priority: 2, usedToday: 0 },
-		{ projectId: "proj_fashion-doniya", providerId: "cred_resend_main", dailySlice: 100, priority: 3, usedToday: 0 },
-		{ projectId: "proj_fashion-doniya", providerId: "cred_sendpulse_main", dailySlice: 500, priority: 4, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_cloudflare_main", dailySlice: 5000, priority: 1, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_brevo_main", dailySlice: 150, priority: 2, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_resend_main", dailySlice: 50, priority: 3, usedToday: 0 },
+		{ projectId: "proj_fashion-doniya", providerId: "cred_sendpulse_main", dailySlice: 250, priority: 4, usedToday: 0 },
 		{ projectId: "proj_fashion-doniya", providerId: "cred_ses_backup", dailySlice: 0, priority: 5, usedToday: 0 },
 		{ projectId: "proj_production", providerId: "cred_cloudflare_main", dailySlice: 5000, priority: 1, usedToday: 0 },
-		{ projectId: "proj_production", providerId: "cred_brevo_main", dailySlice: 300, priority: 2, usedToday: 0 },
-		{ projectId: "proj_production", providerId: "cred_resend_main", dailySlice: 100, priority: 3, usedToday: 0 },
-		{ projectId: "proj_production", providerId: "cred_sendpulse_main", dailySlice: 500, priority: 4, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_brevo_main", dailySlice: 150, priority: 2, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_resend_main", dailySlice: 50, priority: 3, usedToday: 0 },
+		{ projectId: "proj_production", providerId: "cred_sendpulse_main", dailySlice: 250, priority: 4, usedToday: 0 },
 		{ projectId: "proj_production", providerId: "cred_ses_backup", dailySlice: 10000, priority: 5, usedToday: 0 },
 	],
 	keys: [
@@ -446,10 +446,10 @@ export async function getMailHubState(env: MailHubEnv): Promise<MailHubState> {
 			};
 			state.projects.unshift(fdProject);
 			state.allocations.push(
-				{ projectId: "proj_fashion-doniya", providerId: "cred_cloudflare_main", dailySlice: 10000, priority: 1, usedToday: 0 },
-				{ projectId: "proj_fashion-doniya", providerId: "cred_brevo_main", dailySlice: 300, priority: 2, usedToday: 0 },
-				{ projectId: "proj_fashion-doniya", providerId: "cred_resend_main", dailySlice: 100, priority: 3, usedToday: 0 },
-				{ projectId: "proj_fashion-doniya", providerId: "cred_sendpulse_main", dailySlice: 500, priority: 4, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_cloudflare_main", dailySlice: 5000, priority: 1, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_brevo_main", dailySlice: 150, priority: 2, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_resend_main", dailySlice: 50, priority: 3, usedToday: 0 },
+				{ projectId: "proj_fashion-doniya", providerId: "cred_sendpulse_main", dailySlice: 250, priority: 4, usedToday: 0 },
 				{ projectId: "proj_fashion-doniya", providerId: "cred_ses_backup", dailySlice: 0, priority: 5, usedToday: 0 },
 			);
 			state.keys.push({

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
 import { getEnv } from "@/lib/cloudflare";
+import { getDb } from "@/db";
+import { domains } from "@/db/schema";
 import { requireUser } from "@/lib/auth/cookies";
 import { canManageDomains } from "@/lib/auth/admin";
 import { hasValidSessionMutationOrigin } from "@/lib/auth/origin";
@@ -51,6 +54,12 @@ export async function POST(request: Request, { params }: Params) {
 			return NextResponse.json({ ok: true, to: user.email });
 		}
 		const resend = body.action === "setup" ? await setupResendDomain(env, domain) : await verifyResendDomainView(env, domain);
+		if (resend.status === "verified") {
+			await getDb(env)
+				.update(domains)
+				.set({ sendingEnabled: true, ...(domain.status === "pending" ? { status: "active" as const } : {}) })
+				.where(eq(domains.id, domain.id));
+		}
 		return NextResponse.json({ resend }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json({ error: error instanceof Error ? error.message : "Resend request failed" }, { status: 502 });

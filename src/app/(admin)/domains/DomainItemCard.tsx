@@ -19,8 +19,9 @@ import {
 } from "@/components/icons";
 import type { DomainItemCardProps } from "./types";
 
-function StatusIcon({ ok, className }: { ok: boolean; className?: string }) {
+function StatusIcon({ ok, muted = false, className }: { ok: boolean; muted?: boolean; className?: string }) {
   if (ok) return <Check className={cn(className, "text-green-600")} />;
+  if (muted) return <AlertTriangle className={cn(className, "text-neutral-400")} />;
   return <AlertTriangle className={cn(className, "text-amber-500")} />;
 }
 
@@ -73,40 +74,48 @@ export default function DomainItemCard({
               <StatusIcon ok={item.status === "active"} className="h-3 w-3" />
               {item.status === "active" ? t("dns.status.active") : item.status === "pending" ? t("dns.status.pending") : item.status}
             </Badge>
-            {item.receivingProvider === "cloudflare" ? (
-              <Badge
-                variant={item.routingEnabled ? "outline" : "secondary"}
-                className={cn("gap-1", !item.routingEnabled && "opacity-50")}
-              >
-                <StatusIcon ok={item.routingEnabled} className="h-3 w-3" />
-                {t("domains.badge.routing")}
-              </Badge>
-            ) : item.receivingProvider === "none" ? (
-              <Badge variant="secondary" className="gap-1 opacity-50">
-                {t("domains.badge.sendingOnly")}
+            {item.receivingProvider === "none" && item.sendingProvider === "none" ? (
+              <Badge variant="secondary" className="gap-1 opacity-60">
+                {t("domains.notSelected")}
               </Badge>
             ) : (
-              <Badge variant="outline" className="gap-1">
-                {t("domains.badge.receivingVia", { provider: item.receivingProvider === "ses" ? "Amazon SES" : "Resend" })}
-              </Badge>
-            )}
-            {item.sendingProvider === "resend" || item.sendingProvider === "ses" ? (
-              <Badge variant="outline" className="gap-1">
-                <StatusIcon ok className="h-3 w-3" />
-                {t("domains.badge.sendingVia", { provider: item.sendingProvider === "ses" ? "Amazon SES" : "Resend" })}
-              </Badge>
-            ) : item.sendingProvider === "none" ? (
-              <Badge variant="secondary" className="gap-1 opacity-50">
-                {t("domains.badge.receivingOnly")}
-              </Badge>
-            ) : (
-              <Badge
-                variant={item.sendingEnabled ? "outline" : "secondary"}
-                className={cn("gap-1", !item.sendingEnabled && "opacity-50")}
-              >
-                <StatusIcon ok={item.sendingEnabled} className="h-3 w-3" />
-                {t("domains.badge.sending")}
-              </Badge>
+              <>
+                {item.receivingProvider === "cloudflare" ? (
+                  <Badge
+                    variant={item.routingEnabled ? "outline" : "secondary"}
+                    className={cn("gap-1", !item.routingEnabled && "opacity-50")}
+                  >
+                    <StatusIcon ok={item.routingEnabled} className="h-3 w-3" />
+                    {t("domains.badge.routing")}
+                  </Badge>
+                ) : item.receivingProvider === "none" ? (
+                  <Badge variant="secondary" className="gap-1 opacity-50">
+                    {t("domains.badge.sendingOnly")}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="gap-1">
+                    {t("domains.badge.receivingVia", { provider: item.receivingProvider === "ses" ? "Amazon SES" : "Resend" })}
+                  </Badge>
+                )}
+                {item.sendingProvider === "resend" || item.sendingProvider === "ses" ? (
+                  <Badge variant="outline" className="gap-1">
+                    <StatusIcon ok className="h-3 w-3" />
+                    {t("domains.badge.sendingVia", { provider: item.sendingProvider === "ses" ? "Amazon SES" : "Resend" })}
+                  </Badge>
+                ) : item.sendingProvider === "none" ? (
+                  <Badge variant="secondary" className="gap-1 opacity-50">
+                    {t("domains.badge.receivingOnly")}
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant={item.sendingEnabled ? "outline" : "secondary"}
+                    className={cn("gap-1", !item.sendingEnabled && "opacity-50")}
+                  >
+                    <StatusIcon ok={item.sendingEnabled} className="h-3 w-3" />
+                    {t("domains.badge.sending")}
+                  </Badge>
+                )}
+              </>
             )}
           </div>
 
@@ -122,6 +131,7 @@ export default function DomainItemCard({
                     <span className="uppercase">{record}</span>
                     <StatusIcon
                       ok={auth[record] === "ok"}
+                      muted={record === "dkim" && auth[record] === "unknown" && item.sendingProvider === "none"}
                       className="h-3.5 w-3.5"
                     />
                   </span>

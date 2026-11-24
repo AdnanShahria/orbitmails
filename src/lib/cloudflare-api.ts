@@ -109,10 +109,13 @@ export async function disableEmailRouting(env: CloudflareEnv, zoneId: string) {
 export async function listSendingSubdomains(
 	env: CloudflareEnv,
 	zoneId: string,
+	auth?: CfAuth,
 ) {
 	return cfRequest<CfSendingSubdomain[]>(
 		env,
 		`/zones/${zoneId}/email/sending/subdomains`,
+		undefined,
+		auth,
 	);
 }
 
@@ -157,10 +160,13 @@ export async function getSendingSubdomainDns(
 export async function getEmailRoutingSettings(
 	env: CloudflareEnv,
 	zoneId: string,
+	auth?: CfAuth,
 ) {
 	return cfRequest<{ enabled?: boolean; status?: string; name?: string }>(
 		env,
 		`/zones/${zoneId}/email/routing`,
+		undefined,
+		auth,
 	);
 }
 

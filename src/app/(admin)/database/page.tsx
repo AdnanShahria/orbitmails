@@ -117,7 +117,15 @@ export default function DatabaseExplorerPage() {
 			})
 			.then((data: any) => {
 				if (isMounted) {
-					setTableData(data as TableDataResponse);
+					const typed = data as TableDataResponse;
+					setTableData(typed);
+					if (!rowSearch && typed?.pagination) {
+						setTables((prev) =>
+							prev.map((t) =>
+								t.name === selectedTable ? { ...t, count: typed.pagination.totalRows } : t,
+							),
+						);
+					}
 					setIsLoading(false);
 				}
 			})

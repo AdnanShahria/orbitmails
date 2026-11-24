@@ -48,10 +48,36 @@ export async function GET(request: Request) {
 				.map((r) => r.name)
 				.filter((name) => !EXCLUDED_TABLE_PREFIXES.some((prefix) => name.startsWith(prefix)));
 
-			// Return table list immediately without running 60+ parallel counts to prevent Error 1102 CPU limit
+			// Fetch row counts in small batches to avoid 60+ parallel standalone queries
+			const counts = new Map<string, number>();
+			const CHUNK_SIZE = 25;
+			for (let i = 0; i < tableNames.length; i += CHUNK_SIZE) {
+				const chunk = tableNames.slice(i, i + CHUNK_SIZE);
+				try {
+					const results = await db.batch(
+						chunk.map((name) => db.prepare(`SELECT count(*) as count FROM "${name.replace(/"/g, '""')}"`)),
+					);
+					chunk.forEach((name, idx) => {
+						const row = results[idx]?.results?.[0] as { count?: number | string } | undefined;
+						counts.set(name, Number(row?.count ?? 0));
+					});
+				} catch {
+					for (const name of chunk) {
+						try {
+							const row = await db
+								.prepare(`SELECT count(*) as count FROM "${name.replace(/"/g, '""')}"`)
+								.first<{ count?: number | string }>();
+							counts.set(name, Number(row?.count ?? 0));
+						} catch {
+							counts.set(name, 0);
+						}
+					}
+				}
+			}
+
 			const tablesWithCounts = tableNames.map((name) => ({
 				name,
-				count: 0,
+				count: counts.get(name) ?? 0,
 			}));
 
 			return NextResponse.json({

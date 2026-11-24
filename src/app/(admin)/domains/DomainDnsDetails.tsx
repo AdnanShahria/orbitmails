@@ -1,6 +1,6 @@
 import { useLanguage } from "@/components/language-provider";
 import { Button } from "@/components/ui/button";
-import { dnsAuthDescriptions, getDnsAuthItemClass } from "./utils";
+import { dnsAuthDescriptions, getDnsAuthItemClass, getDnsAuthStatusLabel } from "./utils";
 import { ROW_GRID, StatusBadge, StatusRow } from "./status-row";
 import CloudflareReceivingConfig from "./CloudflareReceivingConfig";
 import ReceivingSetupSection from "./ReceivingSetupSection";
@@ -34,7 +34,8 @@ export default function DomainDnsDetails({
 				? t("domains.sendingConfigured")
 				: t("domains.sendingNotConfigured")
 			: t("domains.sendingNotSet");
-	const routingOk = dns.routing.missing.length === 0 && (dns.routing.records.length > 0 || domain.routingEnabled);
+	const hasCfMx = audit?.mx.status === "ok" && audit.mx.found.some((value) => /\.mx\.cloudflare\.net\.?$/i.test(value.trim()));
+	const routingOk = (dns.routing.missing.length === 0 && (dns.routing.records.length > 0 || domain.routingEnabled)) || (domain.zoneId === "manual" && hasCfMx);
 	const routingLabel = routingOk
 		? t("domains.routingConfigured")
 		: dns.routing.missing.length > 0
@@ -54,6 +55,8 @@ export default function DomainDnsDetails({
 				</span>
 				{ok ? (
 					<span className="min-w-0 break-all text-neutral-500">{item.found.length > 0 ? item.found.join(", ") : item.name}</span>
+				) : record === "dkim" && domain.sendingProvider !== "cloudflare" ? (
+					<span className="shrink-0 text-xs text-neutral-500">{getDnsAuthStatusLabel(item.status, t)}</span>
 				) : (
 					<Button
 						variant="outline"
@@ -90,7 +93,7 @@ export default function DomainDnsDetails({
 						{t("domains.setupDescription")}
 					</p>
 					<ul className="mt-3 space-y-2">
-						{(["mx", "spf", "dmarc"] as DnsAuthRecord[]).map(auditRow)}
+						{(domain.sendingProvider === "cloudflare" ? (["mx", "spf", "dmarc"] as DnsAuthRecord[]) : (["mx", "spf", "dkim", "dmarc"] as DnsAuthRecord[])).map(auditRow)}
 					</ul>
 					{manual && (
 						<p className="text-xs text-neutral-500">
